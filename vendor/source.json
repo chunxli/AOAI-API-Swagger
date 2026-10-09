@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/Azure/azure-rest-api-specs",
+  "commit": "a6943a926f76b3a2f90371b3466157eddf760e25",
+  "path": "specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json",
+  "url": "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/a6943a926f76b3a2f90371b3466157eddf760e25/specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json",
+  "retrieved": "2026-09-23",
+  "sha256": "9fade08c5d30751828e67fecca63b3800567c802d1d6c4c91bba3d193843f7a8",
+  "license": "MIT",
+  "note": "Official schema is unmodified. The local UI document changes servers, security, tags and examples in memory, removes external x-ms-examples, and adds multipart UI overlays for binary file pickers and bracket-encoded expires_after fields."
+}

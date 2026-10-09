@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0071e3">
+  <title>Azure OpenAI · REST API 实验室</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/vendor/swagger-ui.css">
+  <link rel="stylesheet" href="/static/site.css">
+  <script defer src="/vendor/swagger-ui-bundle.js"></script>
+  <script defer src="/static/site.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="返回首页">
+        <span class="brand-mark" aria-hidden="true">AI</span>
+        <span>
+          <strong>Azure OpenAI</strong>
+          <small>REST API Lab</small>
+        </span>
+      </a>
+      <div class="header-status">
+        <span class="status-dot" id="header-status-dot" aria-hidden="true"></span>
+        <span id="header-status-text">正在初始化</span>
+        <span class="local-badge">LOCAL</span>
+      </div>
+    </div>
+  </header>
+
+  <header class="hero">
+    <div class="hero-content">
+      <div class="eyebrow">DEVELOPER WORKSPACE · ENTRA ID</div>
+      <h1>探索、验证并调试<br><span>Azure OpenAI v1 API</span></h1>
+      <p>完整官方 Schema，通过本机安全代理访问 Azure。无需配置 API Key；需要时可复制临时访问令牌，页面不显示明文。</p>
+      <div class="hero-actions">
+        <a class="primary-link" href="#api-explorer">开始测试 API</a>
+        <a class="secondary-link" href="#quickstart">查看使用指南</a>
+      </div>
+      <div class="metrics" id="metrics" aria-live="polite">正在加载官方 API 定义…</div>
+    </div>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="code-window">
+        <div class="window-bar"><i></i><i></i><i></i><span>POST /openai/v1/responses</span></div>
+        <pre><span class="code-key">"model"</span>: <span class="code-value">"deployment"</span>,
+<span class="code-key">"input"</span>: <span class="code-value">"Hello, Azure OpenAI"</span>,
+<span class="code-key">"stream"</span>: <span class="code-bool">false</span></pre>
+        <div class="response-line"><span>200</span> Ready for testing</div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="workspace-panel" aria-label="本地配置与认证">
+      <div class="panel-heading">
+        <div>
+          <span class="section-kicker">WORKSPACE</span>
+          <h2>连接与安全控制</h2>
+        </div>
+        <span class="connection-state loading" id="connection-state">
+          <span class="state-dot" aria-hidden="true"></span>
+          <span id="connection-label">身份未验证</span>
+        </span>
+      </div>
+
+      <div class="setup-flow">
+        <article class="setup-step">
+          <div class="step-heading">
+            <span class="step-index" aria-hidden="true">1</span>
+            <div>
+              <h3>选择测试账户</h3>
+              <p>Azure CLI 已登录的租户与订阅</p>
+            </div>
+            <button class="compact-button" id="refresh-accounts" type="button">刷新账户</button>
+          </div>
+          <label class="field-label" for="azure-account">订阅</label>
+          <div class="select-with-action">
+            <select class="setup-select" id="azure-account" disabled>
+              <option>正在读取租户和订阅…</option>
+            </select>
+            <div class="favorite-actions">
+              <button class="favorite-button" id="favorite-account" type="button" aria-pressed="false" disabled>☆ 收藏</button>
+              <button class="favorite-order-button" id="favorite-account-up" type="button" aria-label="上移当前收藏订阅" title="上移当前收藏订阅" disabled>↑</button>
+              <button class="favorite-order-button" id="favorite-account-down" type="button" aria-label="下移当前收藏订阅" title="下移当前收藏订阅" disabled>↓</button>
+            </div>
+          </div>
+          <dl class="selection-details">
+            <div>
+              <dt>租户</dt>
+              <dd id="tenant">—</dd>
+              <button class="value-copy-button" id="copy-tenant-id" type="button" aria-label="复制租户 ID" title="复制租户 ID" disabled></button>
+            </div>
+            <div>
+              <dt>订阅 ID</dt>
+              <dd id="subscription-id">—</dd>
+              <button class="value-copy-button" id="copy-subscription-id" type="button" aria-label="复制订阅 ID" title="复制订阅 ID" disabled></button>
+            </div>
+          </dl>
+        </article>
+
+        <article class="setup-step">
+          <div class="step-heading">
+            <span class="step-index" aria-hidden="true">2</span>
+            <div>
+              <h3>选择 Azure 资源</h3>
+              <p>当前订阅中可访问的资源与 Endpoint 类型</p>
+            </div>
+            <button class="compact-button" id="refresh-environments" type="button" disabled>刷新资源</button>
+          </div>
+          <label class="field-label" for="endpoint">Azure Endpoint</label>
+          <select class="setup-select" id="endpoint" disabled>
+            <option>等待读取 Azure 资源…</option>
+          </select>
+          <div class="selection-summary-row">
+            <p class="selection-summary" id="endpoint-detail">选择订阅后自动发现资源。</p>
+            <button class="value-copy-button" id="copy-endpoint" type="button" aria-label="复制 Endpoint URL" title="复制 Endpoint URL" disabled></button>
+          </div>
+        </article>
+
+        <article class="setup-step">
+          <div class="step-heading">
+            <span class="step-index" aria-hidden="true">3</span>
+            <div>
+              <h3>选择模型部署</h3>
+              <p>推理请求自动使用当前部署</p>
+            </div>
+          </div>
+          <label class="field-label" for="deployment">部署</label>
+          <select class="setup-select" id="deployment" disabled>
+            <option>等待读取部署…</option>
+          </select>
+          <div class="selection-summary-row">
+            <p class="selection-summary" id="deployment-detail">选择 Endpoint 后显示可用部署。</p>
+            <button class="value-copy-button" id="copy-model" type="button" aria-label="复制部署名称" title="复制部署名称" disabled></button>
+          </div>
+        </article>
+      </div>
+
+      <p class="setup-feedback" id="resource-result" role="status">正在读取 Azure CLI 账户与资源…</p>
+
+      <div class="control-grid">
+        <div class="auth-card">
+          <div class="control-copy">
+            <h3>访问令牌</h3>
+            <p id="auth-result" role="status">完成以上选择后获取数据平面令牌。此操作不会调用模型或产生推理费用。</p>
+          </div>
+          <div class="auth-actions">
+            <div class="copy-token-actions">
+              <button class="secondary-button" id="copy-token" type="button" disabled>
+                <span class="button-icon copy-icon" aria-hidden="true"></span>
+                <span id="copy-token-label">复制 Token</span>
+              </button>
+              <button class="secondary-button" id="copy-bearer-token" type="button" disabled>
+                <span class="button-icon copy-icon" aria-hidden="true"></span>
+                <span id="copy-bearer-token-label">复制 Bearer Token</span>
+              </button>
+            </div>
+            <button class="primary-button" id="auth-check" type="button" disabled>
+              <span class="button-icon" aria-hidden="true">✓</span>
+              <span id="auth-button-label">获取访问令牌</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="safety-card" id="safety-card">
+          <div class="control-copy">
+            <h3>写操作保护 <span class="safe-chip" id="safety-chip">已锁定</span></h3>
+            <p>上传、创建、修改、删除资源，以及启动 Batch、Eval 或训练作业前需要明确解锁。</p>
+          </div>
+          <label class="toggle">
+            <input id="allow-mutations" type="checkbox">
+            <span class="toggle-track" aria-hidden="true"><span></span></span>
+            <span class="toggle-label">允许写操作</span>
+          </label>
+        </div>
+      </div>
+
+      <p class="config-note">Endpoint 与部署从所选订阅的 Azure Resource Manager 自动读取。推理请求中的 <code>model</code> 会替换为当前部署；Embeddings、Realtime 和 Fine-tuning 仍需选择兼容部署。</p>
+    </section>
+
+    <aside class="live-api-notice">
+      <span class="notice-icon" aria-hidden="true">!</span>
+      <div><strong>连接的是真实 Azure API，不是 Mock。</strong><span>点击 Execute 才会发送请求；推理、存储和作业可能计费。失败请求不会自动重试。</span></div>
+    </aside>
+
+    <section class="quickstart" id="quickstart" aria-label="使用说明">
+      <div class="panel-heading">
+        <div>
+          <span class="section-kicker">QUICK START</span>
+          <h2>三步完成首次请求</h2>
+        </div>
+        <button class="text-button" id="guide-toggle" type="button" aria-expanded="true" aria-controls="guide-content">收起指南</button>
+      </div>
+      <div id="guide-content">
+        <div class="steps">
+          <article><span class="step-number">01</span><div><h3>配置连接</h3><p>依次选择账户、Endpoint 和部署，再点击“获取访问令牌”。</p></div></article>
+          <article><span class="step-number">02</span><div><h3>选择集合</h3><p>在 <a href="#api-explorer">API EXPLORER</a> 选择“推理入门”，先检查 Models 权限，再测试 Responses 或 Chat。</p></div></article>
+          <article><span class="step-number">03</span><div><h3>检查并执行</h3><p>点击 Try it out，确认模型、Body 和参数后再 Execute，并查看响应 Headers。</p></div></article>
+        </div>
+        <div class="guide-footnote">
+          <span>SSE 在 Swagger 中通常于流结束后显示，初次测试建议 <code>stream: false</code>。</span>
+          <span>Realtime 仅覆盖 REST 控制接口，不含 WebRTC / WebSocket 音频客户端。</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="api-workspace" id="api-explorer">
+      <div class="api-workspace-heading">
+        <div>
+          <span class="section-kicker">API EXPLORER</span>
+          <h2>浏览与测试 REST API</h2>
+          <p>选择 API 文档与测试集合，再展开操作并使用 Try it out 发起请求。</p>
+        </div>
+        <nav class="quick-links" id="collection-links" aria-label="当前集合 API 分类"></nav>
+      </div>
+      <div class="explorer-controls">
+        <div>
+          <label class="field-label" for="api-document">API 文档 / 版本</label>
+          <select class="setup-select" id="api-document" disabled><option>正在加载文档…</option></select>
+        </div>
+        <div>
+          <label class="field-label" for="api-collection">测试集合</label>
+          <select class="setup-select" id="api-collection" disabled><option>正在加载集合…</option></select>
+        </div>
+        <details class="history-settings">
+          <summary>历史保留策略</summary>
+          <div class="history-settings-popover">
+            <label class="field-label" for="history-retention-mode">全站保留方式</label>
+            <select class="setup-select" id="history-retention-mode">
+              <option value="forever">永久保留</option>
+              <option value="max_count">每个 API 最近 N 条</option>
+              <option value="max_age_days">最近 N 天</option>
+            </select>
+            <label class="field-label" id="history-retention-value-label" for="history-retention-value" hidden>保留值</label>
+            <input id="history-retention-value" type="number" min="1" max="10000" value="50" hidden>
+            <button class="compact-button" id="save-history-settings" type="button">保存策略</button>
+            <p id="history-settings-status" role="status">正在读取策略…</p>
+          </div>
+        </details>
+        <button class="compact-button" id="explorer-retry" type="button" hidden>重试加载</button>
+      </div>
+      <p class="config-note" id="document-source">第一版仅提供已适配的 Azure OpenAI v1，其他 API 版本尚未接入。</p>
+      <div class="collection-guide">
+        <p id="collection-status" role="status">正在加载 API 集合…</p>
+        <p id="collection-description"></p>
+        <ol id="collection-steps" aria-label="集合操作指南"></ol>
+        <p class="config-note">仅展示和预填示例，不自动执行或轮询。切换保留连接配置和令牌，但会清除当前 API 编辑及响应；上传、创建与删除仍需解锁。</p>
+      </div>
+      <p id="page-error" role="alert" hidden></p>
+      <div id="swagger-ui"></div>
+    </section>
+  </main>
+  <footer>
+    <span>Azure OpenAI REST API Lab</span>
+    <span>官方固定 Schema · 仅监听 127.0.0.1 · 无外部 CDN 或在线验证器</span>
+  </footer>
+</body>
+</html>

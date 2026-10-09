@@ -1,0 +1,180 @@
+# Azure OpenAI 本地 Swagger 测试站点
+
+基于 Azure 官方 OpenAPI 固定快照，覆盖截图中的 **14 类 API、完整请求/响应 Schema**。
+浏览器访问本地 Swagger UI，由 Python 代理通过 Azure CLI 获取 Microsoft Entra ID 令牌并调用 Azure；无需 API Key。
+
+## 启动
+
+前置条件：Python 3.10+、Node.js/npm（安装本地 Swagger UI 静态资源）、Azure CLI。
+
+首次安装，在此目录执行：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+npm ci --ignore-scripts --no-audit --no-fund
+```
+
+配置 [config.json](config.json)，其中已沿用现有 PowerShell 脚本的资源地址和聊天部署：
+
+```json
+{
+  "endpoint": "https://YOUR-RESOURCE.openai.azure.com",
+  "deployment": "YOUR-CHAT-DEPLOYMENT",
+  "embedding_deployment": "YOUR-EMBEDDING-DEPLOYMENT",
+  "tenant_id": "",
+  "token_scope": "https://ai.azure.com/.default",
+  "port": 8765,
+  "request_timeout_seconds": 180,
+  "max_upload_mb": 32
+}
+```
+
+- `endpoint` 必须是 Azure 公有云资源根地址，不要附加 `/openai/v1`。
+- `deployment` 是聊天/Responses 部署名称，并非必然等于基础模型名称。
+- Embeddings 必须配置单独的 embedding 模型部署。
+- `tenant_id` 留空使用 Azure CLI 当前租户，多租户场景建议显式填写。
+- `token_scope` 默认按 v1 Entra 指南使用 `https://ai.azure.com/.default`，也支持明确配置 `https://cognitiveservices.azure.com/.default`。不会自动回退到另一个 audience。
+- 各接口、工具和部署支持范围依模型、区域及权限而异；全量 Swagger Schema 不代表全部接口在当前资源可用。
+- 修改配置后需重启进程；浏览器不能修改代理的目标地址。
+
+登录并启动：
+
+```powershell
+az login
+# 多租户时使用：az login --tenant "<tenant-id>"
+.\start.ps1
+```
+
+`start.ps1` 默认在后台启动，终端可以直接关闭。常用服务命令：
+
+```powershell
+.\start.ps1                 # 后台启动；已运行时直接显示当前 PID
+.\restart.ps1               # 快速重启并等待服务恢复
+.\stop.ps1                  # 停止后台服务
+.\service.ps1 status        # 查看状态、PID 和访问地址
+.\start.ps1 -Foreground     # 前台启动，用 Ctrl+C 停止
+```
+
+打开 **http://127.0.0.1:8765**。脚本可以从任意目录调用，并按自身目录寻找配置及依赖。
+后台 PID 和 stdout/stderr 日志保存在 `.runtime`；停止和重启会校验 PID 对应的命令行，只管理本站进程。
+
+## 使用流程
+
+1. 从“Azure CLI 测试账户”选择已登录的租户和订阅；常用订阅可点击“收藏”，收藏项会在下拉列表顶部单独显示。页面随后通过 Azure Resource Manager 自动加载可访问的 Azure OpenAI Endpoint 和部署。
+2. 选择 Endpoint 和模型部署，再点击“获取访问令牌”。只获取数据平面令牌，不运行推理；不代表 RBAC 验证成功。验证后可点击“复制 Token”，页面不会显示令牌明文。
+3. 展开 **Models → GET /models → Try it out → Execute** 测试实际资源访问。
+4. 展开 **Responses → POST /responses** 或 **Chat → POST /chat/completions**，检查输入后 Execute；请求中的 `model` 会替换为页面当前选择的部署。
+5. 根据 HTTP 状态、响应 Body、`apim-request-id` / `x-request-id` / `x-ms-client-request-id` 排查。
+6. 删除、上传、创建资源及启动作业前，勾选“允许资源变更 / 作业操作”。该选项只在当前页面生效，刷新即重置。
+7. 每个 API 展开区域底部都有“请求历史”。历史默认永久保存，可查看详情、下载原始请求/响应或将参数恢复到 Try it out；恢复后仍需手动 Execute。
+
+**推理、向量化、存储、训练、Batch、Evals 等都可能计费；不是沙箱或 Mock。**
+这里的解锁仅是本机误操作保护，不是 Azure 权限授权。真实权限仍由 Azure RBAC 决定。
+Entra 身份至少需相应推理权限，例如资源上的 `Cognitive Services OpenAI User`；
+训练和资源管理可能需要不同或更高权限。请按最小权限分配。
+
+## 已实现
+
+- 14 分类：Batch、Chat、Completions、Containers、Conversations、Embeddings、Evals、Files、Fine-tuning、Models、Realtime、Responses、Threads、Vector Stores。
+- 使用完整官方 OpenAPI 3.2 定义，保留所有组件和字段。在内存中调整服务器地址、认证声明、分类描述及常用示例，并移除指向外部 SDK 示例文件的 `x-ms-examples` 扩展，使 UI 文档自包含；原始快照不变。
+- 文件上传 UI 使用小范围适配：原始定义没有声明 `file` 的二进制类型，因此在操作的内联 Schema 中补上 `string/binary`，让 Swagger 显示文件选择器；`expires_after` 展示为实际 multipart 的 `expires_after[anchor]` / `expires_after[seconds]` 字段。原始 components 保持不变。默认文件过期示例为 86400 秒，可根据 Azure 限制修改。
+- Swagger UI 5.32.15 本地静态资源；无 CDN，无外部在线 Schema 校验。
+- Entra 访问令牌在后端内存缓存，临近过期时重新通过 CLI 获取。验证成功后，页面会在当前标签页内存中暂存令牌供“复制 Token”使用，但不会将明文渲染到页面；刷新页面即清除。
+- 页面通过 `az account list` 读取当前 Azure CLI 已登录的租户和订阅。切换账户时，有订阅则按 subscription 获取令牌（订阅已唯一确定租户），无订阅时按 tenant 获取；不执行 `az account set`，不会修改终端中的全局默认订阅。后续 Swagger 请求使用最近一次验证成功的账户。
+- 收藏订阅按 subscription ID 和自定义顺序保存在当前浏览器的 `localStorage`，不上传到服务端。收藏项在下拉列表顶部的独立分组中显示，可用上移/下移按钮调整顺序；刷新 Azure CLI 账户或页面后会保留收藏顺序和当前选择。
+- Endpoint 和部署通过 Azure Resource Manager `2024-10-01` API 自动发现；需要所选订阅的资源读取权限。后端只接受本次发现且域名通过 Azure 校验的 Endpoint，避免代理到任意地址。
+- 每个 API 操作展开后提供对应的 Microsoft Foundry 和 OpenAI 官方文档快捷入口；仅在官方存在匹配文档时显示该侧链接。
+- 页面选择的 Endpoint 会决定后续 Swagger 请求目标；Responses、Chat Completions、Completions 和 Embeddings 请求 Body 中的 `model` 会由后端替换为当前部署。Batch 输入 JSONL 内的模型字段不会自动改写。
+- 固定 Azure 目标、仅代理官方路径与方法、拒绝重定向、仅监听 `127.0.0.1`，验证 Host / Origin / 本机会话 Header。
+- JSON 请求、原始 multipart 文件上传、二进制下载、分页参数和 SSE 透传。
+- 客户端可填写 `x-ms-client-request-id`；留空自动生成 UUID，并在本地响应 Header 返回。仅接受 1–128 个字母、数字及 `._:-`。
+- Azure HTTP 错误状态和 Body 透传；本地认证/网络错误返回明确 JSON 错误。不会自动重试计费或写入请求。
+- 401 会使缓存失效，下一次手动请求重新获取令牌，不重放原请求。
+- 日志仅记录方法、路径、状态和客户端请求 ID，不记录请求 Body、令牌或原始认证错误文本。
+- 请求历史由本地代理写入 `.runtime/request-history.sqlite3`，按文档、方法和 OpenAPI 路径区分 API。JSON、multipart、上传文件、二进制下载及 SSE 均完整保存，响应列表只读取摘要，完整内容在详情中按需读取或下载。
+- 历史默认永久保留。API Explorer 的“历史保留策略”可改为每个 API 最近 1–10,000 条或最近 1–3,650 天；也可删除单条或清空当前 API。策略变更后会立即清理不符合条件的记录。
+- 历史恢复会填回路径、查询、业务 Header、JSON Body 和表单文本字段，但不会自动发送请求。浏览器不允许脚本恢复文件选择框，因此上传文件需重新选择；原上传内容仍可从历史下载。
+- 历史记录不会保存访问令牌、`Authorization`、API Key、Cookie 或 `X-Lab-*` 控制 Header。数据库会包含真实提示词、响应和上传文件，应按敏感本地数据保护。
+
+## API 文档与测试集合
+
+API EXPLORER 提供“API 文档 / 版本”和“测试集合”两个选择框。第一版只启用已适配的
+**Azure OpenAI v1** 官方固定快照，并显示来源、快照日期及提交号；不代表已支持日期版本或 Preview API。
+
+| 集合 | 内容 |
+|---|---|
+| 全部接口 | 保留完整官方接口与分类 |
+| 推理入门 | 3 个操作：Models、Responses、Chat Completions；两种推理接口为替代选择 |
+| Batch 测试 | 4 个操作：上传 JSONL、创建 Batch、查询 Batch、下载结果/错误文件 |
+| 向量检索 | 6 个操作：独立 Embeddings 测试，以及文件上传、创建向量库、关联文件、检查入库、搜索 |
+
+集合指南可跳转到具体接口，示例相互独立。Batch 集合使用 `/v1/responses` 示例；
+上传 JSONL 中的 URL 需与 Batch endpoint 对应，文件中的 `model` 需填写兼容 Batch 的部署名。
+Embedding 测试与托管文件检索不是同一条必经流程；Vector Store 会处理文件入库。
+
+- 不自动发起请求、轮询、传递 ID 或创建资源；仍需手动 Execute。
+- 切换集合保留账户、Endpoint、部署、令牌及写操作保护状态。
+- 编辑过请求、进入 Try it out 或执行过请求后，切换会先确认；确认后清除 API 编辑、文件选择和响应结果。取消则保留原集合。
+- 请求执行期间禁止切换；Schema 加载失败时保留原集合并明确提示，可重新选择重试。
+- 集合是测试视图，不是权限边界；后端继续按完整的官方 v1 路由白名单和写操作保护校验请求。
+- `/api/explorer` 返回文档与集合目录；`/api/openapi.json?document=azure-openai-v1&collection=batch` 返回对应 Schema。
+  不带参数的 `/api/openapi.json` 继续返回 v1 全部接口。
+- 文档注册和集合定义位于 [specification.py](specification.py) 的 `DOCUMENTS` / `COLLECTIONS`。
+  后续新增版本必须先适配代理路径、认证 scope、部署及版本参数，再注册；不支持直接导入任意 URL、
+  OpenAPI 文件或将网页文档当作可执行接口。
+
+## 边界与注意事项
+
+- **不是对外部署方案**：不要修改监听地址开放到局域网或公网，不要加反向代理暴露。本机其他拥有等同操作权限的进程也可能访问它。
+- Swagger 输出的 curl 指向本机代理，但刻意不含本机会话码，不能直接复制后就绕过保护执行。正式程序请使用原有 Python/PowerShell 示例。
+- Realtime 只涵盖 REST 控制面；不提供 WebRTC/WebSocket/SIP 音频客户端。Realtime 的响应可能包含短期 `client_secret`，请勿分享响应截图。
+- SSE 由代理流式转发，但 Swagger UI 通常等流结束后再显示，建议初次测试使用 `stream: false`。
+- 文件上传默认最大 **32 MiB**，超过返回 413。可按需修改配置；上传缓存在本机内存，因此不适合巨型文件批量传输。Azure 自身仍有额外限制。
+- 历史响应大小不设上限并采用分块存储。文件、音频、图片和长时间 SSE 会持续增大 `.runtime/request-history.sqlite3`；请根据磁盘容量配置保留策略。停止服务后可备份该文件；如需彻底清除全部历史，可停止服务后删除该数据库文件，下一次启动会自动重建。
+- 接收响应过程中断连时，流会失败并记录错误；HTTP 响应一旦开始，无法再改变其状态码。请结合客户端网络错误和日志判断完整性。
+- 长时任务推荐 `background: true` 然后手动查询状态，而不是无限等待同步请求。
+- 不会自动调用 Responses、上传文件、创建作业、执行删除或修改 Azure RBAC。
+- Threads 保留在官方快照中用于参考；旧 Assistants 生命周期及迁移以官方公告为准，不建议新建应用采用。
+- 不提供 Azure ARM 资源/部署管理。`GET /models` 不等同于 Azure 的部署列表。
+- 企业网络代理由 HTTPX 的环境配置控制；若连接失败，应检查代理、TLS 信任、DNS 和 Azure 网络访问策略。
+
+## 常见问题
+
+| 现象 | 排查 |
+|---|---|
+| 401 local-proxy | `az login`、租户、token scope；验证当前 CLI 登录会话 |
+| 401/403 Azure | 检查 Azure RBAC、身份、token audience、防火墙/网络策略；角色刚分配可能需等待生效 |
+| 403 local-proxy | 检查是否从本机页面操作、是否勾选资源变更、是否使用正确端口 |
+| 400 Azure | 模型不支持字段、缺少必填项、请求格式不正确；根据原始错误修改 |
+| 404 Azure | 部署名称、API/模型/区域兼容性、资源 ID |
+| 429 Azure | 配额/限速；参考 `retry-after` 后手动决定是否重试 |
+| 502/504 local-proxy | DNS、TLS、网络代理、Azure 端超时；不会自动重试 |
+| 上传 413 | 本机 `max_upload_mb`；Azure 文件大小限制需另外核查 |
+| 端口被占用 | 修改配置中的 `port`，重启并使用新 URL；不要终止未知进程 |
+
+## 离线测试
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_server
+node --check .\static\site.js
+```
+
+测试使用假的 Entra credential 和 HTTPX MockTransport，不发送真实 Azure 请求，不会产生费用。
+覆盖 Schema 完整性、路径白名单、访问限制、资源操作保护、JSON/multipart/二进制/SSE、
+令牌缓存、超时、错误透传、不自动重试，以及历史持久化、内容恢复、隐私过滤和保留策略等行为。
+
+当前版本已在 Windows / Python 3.14 上验证。`requirements-lock.txt` 记录该环境中验证过的 Python 包版本，
+`package-lock.json` 固定前端依赖；升级依赖时可从 `requirements.txt` 的兼容范围安装后重新运行测试。
+浏览器验证采用请求拦截模拟 Responses 和文件上传，不代表已连接当前 Azure 资源，也不会自动检查实际部署或 RBAC。
+
+## 官方来源与授权
+
+- [Microsoft Learn v1 生命周期与 OpenAPI 下载入口](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle)
+- [Microsoft Entra ID 认证指南](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/managed-identity)
+- 官方快照来源/提交/哈希：[vendor/source.json](vendor/source.json)
+- 原始定义：[vendor/azure-openai-v1.json](vendor/azure-openai-v1.json)
+- MIT 授权：[Azure LICENSE](vendor/LICENSE-Azure.txt)、[OpenAI LICENSE](vendor/LICENSE-OpenAI.txt)
+- Swagger UI 的授权随本地 npm 包保留在 `node_modules/swagger-ui-dist` 中。
+
+这里提供的是人工触发的开发测试工具，不承诺所有当前/未来 Azure 资源支持快照中的每项能力。
