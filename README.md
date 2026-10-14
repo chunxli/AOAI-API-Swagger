@@ -68,6 +68,7 @@ az login
 5. 根据 HTTP 状态、响应 Body、`apim-request-id` / `x-request-id` / `x-ms-client-request-id` 排查。
 6. 删除、上传、创建资源及启动作业前，勾选“允许资源变更 / 作业操作”。该选项只在当前页面生效，刷新即重置。
 7. 每个 API 展开区域底部都有“请求历史”。历史默认永久保存，可查看详情、下载原始请求/响应或将参数恢复到 Try it out；恢复后仍需手动 Execute。
+8. 获取访问令牌并执行请求后，可在 API Explorer 顶部复制等价的 Bash `curl`、Windows PowerShell 5.x 命令或 Python `httpx` 脚本。命令直接调用所选 Azure Endpoint，并嵌入页面内存中最近一次获取或刷新的临时 Bearer Token，不会再次调用 Azure CLI，也不包含本机代理的 `X-Lab-*` Header。命令含敏感且有时效性的 Token，请勿分享；文件上传命令还会使用本地路径占位符，运行前需替换为真实文件路径。
 
 **推理、向量化、存储、训练、Batch、Evals 等都可能计费；不是沙箱或 Mock。**
 这里的解锁仅是本机误操作保护，不是 Azure 权限授权。真实权限仍由 Azure RBAC 决定。
@@ -86,16 +87,19 @@ Entra 身份至少需相应推理权限，例如资源上的 `Cognitive Services
 - Endpoint 和部署通过 Azure Resource Manager `2024-10-01` API 自动发现；需要所选订阅的资源读取权限。后端只接受本次发现且域名通过 Azure 校验的 Endpoint，避免代理到任意地址。
 - 每个 API 操作展开后提供对应的 Microsoft Foundry 和 OpenAI 官方文档快捷入口；仅在官方存在匹配文档时显示该侧链接。
 - 页面选择的 Endpoint 会决定后续 Swagger 请求目标；Responses、Chat Completions、Completions 和 Embeddings 请求 Body 中的 `model` 会由后端替换为当前部署。Batch 输入 JSONL 内的模型字段不会自动改写。
+- 每次 Execute 会同步生成对应的 Bash `curl`、Windows PowerShell 5.x 命令与 Python `httpx` 脚本，保留请求方法、Azure URL、查询参数、业务 Header、请求 Body 和页面最近获取的临时 Token，并应用与代理一致的模型部署替换。账户切换或 Token 刷新开始时会立即清除旧命令，必须在最新 Token 就绪后重新 Execute。PowerShell 普通请求使用 `Invoke-WebRequest -UseBasicParsing`，multipart 上传使用 .NET `HttpClient`；Python 上传脚本使用 `ExitStack` 管理文件句柄。
+- 页面复制操作优先使用同步文本选择复制，以兼容 VS Code 集成浏览器未保持文档焦点的场景；不支持时再使用标准 Clipboard API。复制失败会在对应区域显示明确错误。
 - 固定 Azure 目标、仅代理官方路径与方法、拒绝重定向、仅监听 `127.0.0.1`，验证 Host / Origin / 本机会话 Header。
 - JSON 请求、原始 multipart 文件上传、二进制下载、分页参数和 SSE 透传。
 - 客户端可填写 `x-ms-client-request-id`；留空自动生成 UUID，并在本地响应 Header 返回。仅接受 1–128 个字母、数字及 `._:-`。
 - Azure HTTP 错误状态和 Body 透传；本地认证/网络错误返回明确 JSON 错误。不会自动重试计费或写入请求。
 - 401 会使缓存失效，下一次手动请求重新获取令牌，不重放原请求。
 - 日志仅记录方法、路径、状态和客户端请求 ID，不记录请求 Body、令牌或原始认证错误文本。
-- 请求历史由本地代理写入 `.runtime/request-history.sqlite3`，按文档、方法和 OpenAPI 路径区分 API。JSON、multipart、上传文件、二进制下载及 SSE 均完整保存，响应列表只读取摘要，完整内容在详情中按需读取或下载。
+- 请求历史由本地代理写入 `.runtime/request-history.sqlite3`，按文档、方法和 OpenAPI 路径区分 API。JSON、multipart、上传文件、二进制下载及 SSE 均完整保存，响应列表只读取摘要。每条详情会同时显示浏览器原始请求、后端实际发往 Azure 的最终 URL / Headers / 完整 Body，以及 Azure 响应 Headers / Body；因此可核对模型替换、查询参数和最终转发值。未通过本地校验或认证的请求会明确标为“未发往 Azure”。
 - 历史默认永久保留。API Explorer 的“历史保留策略”可改为每个 API 最近 1–10,000 条或最近 1–3,650 天；也可删除单条或清空当前 API。策略变更后会立即清理不符合条件的记录。
+- 服务重启不会清除历史数据库；旧页面检测到重启造成的本机会话失效后，会自动获取新会话并重试历史读取，无需手动刷新页面。
 - 历史恢复会填回路径、查询、业务 Header、JSON Body 和表单文本字段，但不会自动发送请求。浏览器不允许脚本恢复文件选择框，因此上传文件需重新选择；原上传内容仍可从历史下载。
-- 历史记录不会保存访问令牌、`Authorization`、API Key、Cookie 或 `X-Lab-*` 控制 Header。数据库会包含真实提示词、响应和上传文件，应按敏感本地数据保护。
+- 历史记录不会保存访问令牌、API Key、Cookie 或 `X-Lab-*` 控制 Header 的值；实际转发日志中的 `Authorization` 等敏感 Header 只保留名称并将值记为 `<redacted>`。数据库会包含真实提示词、最终转发 Body、响应和上传文件，应按敏感本地数据保护。
 
 ## API 文档与测试集合
 

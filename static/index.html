@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="/vendor/swagger-ui.css">
   <link rel="stylesheet" href="/static/site.css">
   <script defer src="/vendor/swagger-ui-bundle.js"></script>
+  <script defer src="/static/command-copy.js"></script>
+  <script defer src="/static/session-fetch.js"></script>
   <script defer src="/static/site.js"></script>
 </head>
 <body>
@@ -247,6 +249,27 @@
         <ol id="collection-steps" aria-label="集合操作指南"></ol>
         <p class="config-note">仅展示和预填示例，不自动执行或轮询。切换保留连接配置和令牌，但会清除当前 API 编辑及响应；上传、创建与删除仍需解锁。</p>
       </div>
+      <section class="request-command-panel" id="request-command-panel" aria-labelledby="request-command-title">
+        <div>
+          <span class="section-kicker">COMMAND COPY</span>
+          <h3 id="request-command-title">复制最近请求的等价命令</h3>
+          <p id="request-command-status" role="status">获取访问令牌并执行请求后，可复制包含当前临时 Token 的 Bash curl、Windows PowerShell 5.x 命令或 Python 脚本。</p>
+        </div>
+        <div class="request-command-actions">
+          <button class="secondary-button" id="copy-bash-command" type="button" disabled>
+            <span class="button-icon copy-icon" aria-hidden="true"></span>
+            <span>复制 Bash curl</span>
+          </button>
+          <button class="secondary-button" id="copy-powershell-command" type="button" disabled>
+            <span class="button-icon copy-icon" aria-hidden="true"></span>
+            <span>复制 PowerShell 5.x</span>
+          </button>
+          <button class="secondary-button" id="copy-python-command" type="button" disabled>
+            <span class="button-icon copy-icon" aria-hidden="true"></span>
+            <span>复制 Python 脚本</span>
+          </button>
+        </div>
+      </section>
       <p id="page-error" role="alert" hidden></p>
       <div id="swagger-ui"></div>
     </section>

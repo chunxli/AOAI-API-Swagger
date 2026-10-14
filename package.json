@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Local Swagger UI assets; no external CDN or validator",
+  "scripts": {
+    "test": "node --test test_*.js"
+  },
   "dependencies": {
     "swagger-ui-dist": "5.32.15"
   }

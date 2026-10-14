@@ -36,6 +36,13 @@ ARM_API_VERSION = "2024-10-01"
 MODEL_OVERRIDE_PATHS = {"/responses", "/chat/completions", "/completions", "/embeddings"}
 HISTORY_DOCUMENT_ID = "azure-openai-v1"
 HISTORY_WRITE_BUFFER_BYTES = 256 * 1024
+SENSITIVE_LOG_HEADERS = {
+    "authorization",
+    "api-key",
+    "cookie",
+    "proxy-authorization",
+    "x-lab-session",
+}
 
 
 class AzureCliAccountError(Exception):
@@ -66,6 +73,13 @@ def normalize_azure_endpoint(endpoint):
     ):
         return None
     return endpoint.rstrip("/")
+
+
+def redact_log_headers(headers):
+    return {
+        name: "<redacted>" if name.lower() in SENSITIVE_LOG_HEADERS else value
+        for name, value in headers.items()
+    }
 
 
 def azure_endpoint_variants(properties):
@@ -686,6 +700,29 @@ def create_app(
             headers=headers,
         )
 
+    @app.get("/api/history/{history_id}/forwarded-request")
+    async def history_forwarded_request_body(history_id: str, download: bool = False):
+        try:
+            history_id = str(uuid.UUID(history_id))
+        except ValueError:
+            return error(400, "历史记录 ID 格式无效。")
+        record = await asyncio.to_thread(app.state.history.get_record, history_id)
+        if record is None:
+            return error(404, "历史记录不存在或已被清理。")
+        if not record["forwarded_url"]:
+            return error(404, "该请求在本地终止，未发往 Azure。")
+        body = await asyncio.to_thread(app.state.history.get_forwarded_body, history_id)
+        headers = {}
+        if download or not is_text_content(record["forwarded_content_type"]):
+            headers["Content-Disposition"] = (
+                f'attachment; filename="{history_id}-forwarded-request.bin"'
+            )
+        return Response(
+            content=body,
+            media_type=record["forwarded_content_type"] or "application/octet-stream",
+            headers=headers,
+        )
+
     @app.get("/api/history/{history_id}/restore")
     async def history_restore_snapshot(history_id: str):
         try:
@@ -791,6 +828,7 @@ def create_app(
                 and key not in {"authorization", "api-key", "cookie"}
                 and not key.startswith("x-lab-")
             }
+            safe_headers["x-ms-client-request-id"] = request_id
             try:
                 history_id, _ = await asyncio.to_thread(
                     app.state.history.create_record,
@@ -902,6 +940,18 @@ def create_app(
         upstream_request = client.build_request(
             request.method, url, headers=outgoing_headers, content=bytes(body)
         )
+        if history_id:
+            try:
+                await asyncio.to_thread(
+                    app.state.history.record_forwarded_request,
+                    history_id,
+                    url=str(upstream_request.url),
+                    headers=redact_log_headers(dict(upstream_request.headers)),
+                    content_type=upstream_request.headers.get("content-type", ""),
+                    body=bytes(body),
+                )
+            except Exception:
+                LOGGER.exception("Unable to record forwarded request %s.", history_id)
         try:
             upstream = await client.send(upstream_request, stream=True)
         except httpx.TimeoutException:

@@ -62,6 +62,40 @@ async function initialize() {
     resourceResult.className = `setup-feedback ${state}`;
     resourceResult.textContent = text;
   };
+  const copyTextToClipboard = async (value) => {
+    const text = String(value);
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.setAttribute("aria-hidden", "true");
+    Object.assign(textarea.style, {
+      position: "fixed",
+      top: "0",
+      left: "0",
+      width: "1px",
+      height: "1px",
+      padding: "0",
+      border: "0",
+      opacity: "0",
+      pointerEvents: "none",
+    });
+    document.body.append(textarea);
+    let copied = false;
+    try {
+      textarea.focus({ preventScroll: true });
+      textarea.select();
+      textarea.setSelectionRange(0, text.length);
+      copied = document.execCommand("copy");
+    } finally {
+      textarea.remove();
+    }
+    if (copied) return;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    throw new Error("当前浏览器不允许写入系统剪贴板。");
+  };
   const setCopyValue = (button, value) => {
     button.dataset.copyValue = value || "";
     button.disabled = !value;
@@ -78,7 +112,7 @@ async function initialize() {
       if (!value) return;
       button.disabled = true;
       try {
-        await navigator.clipboard.writeText(value);
+        await copyTextToClipboard(value);
         button.classList.add("copied");
         window.setTimeout(() => {
           button.classList.remove("copied");
@@ -97,6 +131,7 @@ async function initialize() {
     copyBearerTokenButton.disabled = true;
     copyBearerTokenLabel.textContent = "复制 Bearer Token";
     setConnectionState("loading", "身份未验证");
+    setRequestCommands(null);
   };
   const selectedAccount = () => accounts[Number(accountSelect.value)] || {
     tenant_id: "",
@@ -456,7 +491,7 @@ async function initialize() {
     }
     button.disabled = true;
     try {
-      await navigator.clipboard.writeText(value);
+      await copyTextToClipboard(value);
       label.textContent = "已复制";
     } catch (error) {
       label.textContent = defaultLabel;
@@ -501,6 +536,11 @@ async function initialize() {
   const explorerError = document.getElementById("page-error");
   const collectionStatus = document.getElementById("collection-status");
   const swaggerContainer = document.getElementById("swagger-ui");
+  const commandPanel = document.getElementById("request-command-panel");
+  const commandStatus = document.getElementById("request-command-status");
+  const copyBashCommand = document.getElementById("copy-bash-command");
+  const copyPowerShellCommand = document.getElementById("copy-powershell-command");
+  const copyPythonCommand = document.getElementById("copy-python-command");
   const historyRetentionMode = document.getElementById("history-retention-mode");
   const historyRetentionValue = document.getElementById("history-retention-value");
   const historyRetentionValueLabel = document.getElementById("history-retention-value-label");
@@ -513,7 +553,49 @@ async function initialize() {
   let explorerBusy = false;
   let requestCount = 0;
   let hasEdits = false;
+  let requestCommands = null;
   const initialSwaggerState = {};
+
+  const setRequestCommands = (commands, error = null) => {
+    requestCommands = commands;
+    copyBashCommand.disabled = !commands;
+    copyPowerShellCommand.disabled = !commands;
+    copyPythonCommand.disabled = !commands;
+    commandStatus.className = error ? "error" : commands ? "success" : "";
+    if (error) {
+      commandStatus.textContent = `无法生成请求命令：${error.message}`;
+    } else if (commands) {
+      commandStatus.textContent = commands.hasFilePlaceholders
+        ? `已生成 ${commands.targetUrl} 的命令，已包含当前临时 Token。复制后请替换文件路径，且不要分享命令。`
+        : `已生成 ${commands.targetUrl} 的命令，已包含当前内存中的临时 Token；请勿分享。`;
+    } else {
+      commandStatus.textContent = "获取访问令牌并执行请求后，可复制包含当前临时 Token 的 Bash curl、Windows PowerShell 5.x 命令或 Python 脚本。";
+    }
+  };
+  const copyRequestCommand = async (button, key, defaultLabel) => {
+    if (!requestCommands) return;
+    const label = button.querySelector("span:last-child");
+    button.disabled = true;
+    try {
+      await copyTextToClipboard(requestCommands[key]);
+      label.textContent = "已复制";
+      window.setTimeout(() => { label.textContent = defaultLabel; }, 1400);
+    } catch (error) {
+      commandStatus.className = "error";
+      commandStatus.textContent = `无法写入剪贴板：${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  };
+  copyBashCommand.addEventListener("click", () => (
+    copyRequestCommand(copyBashCommand, "bash", "复制 Bash curl")
+  ));
+  copyPowerShellCommand.addEventListener("click", () => (
+    copyRequestCommand(copyPowerShellCommand, "powershell", "复制 PowerShell 5.x")
+  ));
+  copyPythonCommand.addEventListener("click", () => (
+    copyRequestCommand(copyPythonCommand, "python", "复制 Python 脚本")
+  ));
 
   const updateExplorerControls = () => {
     const disabled = explorerBusy || requestCount > 0 || !documents.length;
@@ -597,6 +679,16 @@ async function initialize() {
         ) {
           throw new Error("当前操作需要先选择模型部署。");
         }
+        try {
+          setRequestCommands(window.AzureOpenAICommandCopy.buildRequestCommands({
+            request,
+            endpoint: environment.endpoint,
+            deploymentName: deployment?.name || null,
+            accessToken,
+          }));
+        } catch (error) {
+          setRequestCommands(null, error);
+        }
         if (document.getElementById("allow-mutations").checked) {
           request.headers["X-Lab-Allow-Mutations"] = "true";
         }
@@ -605,15 +697,16 @@ async function initialize() {
     },
   };
 
-  const historyHeaders = () => ({ "X-Lab-Session": status.session_token });
+  const historyFetch = window.AzureOpenAISessionFetch.createSessionFetch({
+    fetchImpl: window.fetch.bind(window),
+    getToken: () => status.session_token,
+    setToken: (token) => {
+      status.session_token = token;
+      setHeaderStatus("ready", "本地代理已重新连接");
+    },
+  });
   const fetchHistoryJson = async (url, options = {}) => {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...historyHeaders(),
-        ...(options.headers || {}),
-      },
-    });
+    const response = await historyFetch(url, options);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error?.message || `HTTP ${response.status}`);
     return result;
@@ -757,9 +850,9 @@ async function initialize() {
     message.className = "api-history-message";
     message.textContent = "正在准备下载…";
     try {
-      const response = await fetch(`/api/history/${historyId}/${direction}?download=true`, {
-        headers: historyHeaders(),
-      });
+      const response = await historyFetch(
+        `/api/history/${historyId}/${direction}?download=true`,
+      );
       if (!response.ok) {
         const result = await response.json();
         throw new Error(result.error?.message || `HTTP ${response.status}`);
@@ -845,13 +938,11 @@ async function initialize() {
           method: detail.method,
           path: detail.actual_path,
           query: detail.query_string,
-          headers: detail.request_headers,
           content_type: detail.request_content_type,
           size: detail.request_size,
         },
         response: {
           status: detail.response_status,
-          headers: detail.response_headers,
           content_type: detail.response_content_type,
           size: detail.response_size,
           completed: detail.completed,
@@ -859,10 +950,88 @@ async function initialize() {
         },
       }), "application/json");
       container.append(detailHead, metadata);
+      const requestHeadersHead = document.createElement("div");
+      requestHeadersHead.className = "api-history-detail-head";
+      const requestHeadersTitle = document.createElement("strong");
+      requestHeadersTitle.textContent = "请求 Headers";
+      const requestHeadersNotice = document.createElement("span");
+      requestHeadersNotice.textContent = "敏感值不保存";
+      requestHeadersHead.append(requestHeadersTitle, requestHeadersNotice);
+      const requestHeaders = document.createElement("pre");
+      renderHistoryCode(
+        requestHeaders,
+        JSON.stringify(detail.request_headers || {}),
+        "application/json",
+      );
+      const forwardedHead = document.createElement("div");
+      forwardedHead.className = "api-history-detail-head";
+      const forwardedTitle = document.createElement("strong");
+      forwardedTitle.textContent = "实际发往 Azure 的请求";
+      const forwardedNotice = document.createElement("span");
+      forwardedNotice.textContent = "敏感 Header 值已脱敏";
+      forwardedHead.append(forwardedTitle, forwardedNotice);
+      const forwardedContent = document.createElement("div");
+      if (detail.forwarded_url) {
+        const forwardedMetadata = document.createElement("pre");
+        renderHistoryCode(forwardedMetadata, JSON.stringify({
+          method: detail.method,
+          url: detail.forwarded_url,
+          headers: detail.forwarded_headers,
+          content_type: detail.forwarded_content_type,
+          size: detail.forwarded_size,
+          forwarded_at: detail.forwarded_at,
+        }), "application/json");
+        forwardedContent.append(forwardedMetadata);
+        if (/^(application\/(.+\+)?json|application\/x-ndjson|text\/)/i.test(detail.forwarded_content_type)) {
+          const forwardedResponse = await historyFetch(
+            `/api/history/${record.id}/forwarded-request`,
+          );
+          if (!forwardedResponse.ok) throw new Error(`HTTP ${forwardedResponse.status}`);
+          const forwardedBody = document.createElement("pre");
+          renderHistoryCode(
+            forwardedBody,
+            await forwardedResponse.text() || "无请求 Body",
+            detail.forwarded_content_type,
+          );
+          forwardedContent.append(forwardedBody);
+        } else {
+          const binary = document.createElement("p");
+          binary.className = "api-history-message";
+          binary.textContent = "实际请求 Body 为二进制，请使用“下载实际请求”。";
+          forwardedContent.append(binary);
+        }
+      } else if (detail.forwarded_state === 0) {
+        const notForwarded = document.createElement("p");
+        notForwarded.className = "api-history-message";
+        notForwarded.textContent = "请求在本地校验或认证阶段终止，未发往 Azure。";
+        forwardedContent.append(notForwarded);
+      } else {
+        const unavailable = document.createElement("p");
+        unavailable.className = "api-history-message";
+        unavailable.textContent = "该记录生成于实际转发日志功能启用前，未采集最终请求快照。";
+        forwardedContent.append(unavailable);
+      }
+      const responseHeadersHead = document.createElement("div");
+      responseHeadersHead.className = "api-history-detail-head";
+      const responseHeadersTitle = document.createElement("strong");
+      responseHeadersTitle.textContent = "响应 Headers";
+      responseHeadersHead.append(responseHeadersTitle);
+      const responseHeaders = document.createElement("pre");
+      renderHistoryCode(
+        responseHeaders,
+        JSON.stringify(detail.response_headers || {}),
+        "application/json",
+      );
+      container.append(
+        requestHeadersHead,
+        requestHeaders,
+        forwardedHead,
+        forwardedContent,
+        responseHeadersHead,
+        responseHeaders,
+      );
       if (/^(application\/(.+\+)?json|application\/x-ndjson|text\/)/i.test(detail.response_content_type)) {
-        const response = await fetch(`/api/history/${record.id}/response`, {
-          headers: historyHeaders(),
-        });
+        const response = await historyFetch(`/api/history/${record.id}/response`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const text = await response.text();
         const bodyHead = document.createElement("div");
@@ -1035,7 +1204,7 @@ async function initialize() {
         }, "quiet");
         const copyPreview = makeHistoryButton("复制", async () => {
           try {
-            await navigator.clipboard.writeText(summary.dataset.formattedText || record.response_summary || "");
+            await copyTextToClipboard(summary.dataset.formattedText || record.response_summary || "");
             copyPreview.textContent = "已复制";
             window.setTimeout(() => { copyPreview.textContent = "复制"; }, 1200);
           } catch (error) {
@@ -1075,6 +1244,15 @@ async function initialize() {
           makeHistoryButton("恢复请求", () => restoreHistoryRequest(block, record.id, message), "primary"),
           detailButton,
           makeHistoryButton("下载请求", () => downloadHistoryContent(record.id, "request", message), "quiet"),
+          (() => {
+            const downloadForwarded = makeHistoryButton(
+            "下载实际请求",
+            () => downloadHistoryContent(record.id, "forwarded-request", message),
+            "quiet",
+            );
+            downloadForwarded.disabled = !record.forwarded;
+            return downloadForwarded;
+          })(),
           makeHistoryButton("下载响应", () => downloadHistoryContent(record.id, "response", message), "quiet"),
           makeHistoryButton("删除", async () => {
             if (!window.confirm("确定删除这条请求历史吗？")) return;
@@ -1250,6 +1428,7 @@ async function initialize() {
       activeDocument = documentInfo;
       activeCollection = collection;
       hasEdits = false;
+      setRequestCommands(null);
       showCollectionDetails(documentInfo, collection);
     } catch (error) {
       explorerError.hidden = false;

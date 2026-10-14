@@ -24,6 +24,7 @@ from server import (
     TokenManager,
     TokenProvider,
 )
+from history_store import HistoryStore
 from specification import API_DOCUMENTATION, load_official_spec, operations, TAG_DESCRIPTIONS
 
 ROOT = Path(__file__).resolve().parent
@@ -317,6 +318,23 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(json.loads(sent.content)["model"], "alternate-gpt")
         self.assertNotIn("x-lab-environment", sent.headers)
         self.assertNotIn("x-lab-deployment", sent.headers)
+        record = self.history().json()["records"][0]
+        self.assertTrue(record["forwarded"])
+        detail = self.client.get(
+            f"/api/history/{record['id']}",
+            headers={"X-Lab-Session": self.session},
+        ).json()
+        self.assertEqual(
+            detail["forwarded_url"],
+            "https://alternate.openai.azure.com/openai/v1/responses",
+        )
+        self.assertEqual(detail["forwarded_headers"]["authorization"], "<redacted>")
+        self.assertNotIn("offline-test-token", json.dumps(detail))
+        forwarded_body = self.client.get(
+            f"/api/history/{record['id']}/forwarded-request",
+            headers={"X-Lab-Session": self.session},
+        )
+        self.assertEqual(forwarded_body.json()["model"], "alternate-gpt")
 
     def test_rejects_unknown_environment_and_deployment(self):
         unknown = self.call(headers={"X-Lab-Environment": "unknown"})
@@ -480,6 +498,8 @@ class ProxyTests(unittest.TestCase):
         )
         self.assertEqual(detail.status_code, 200)
         stored_headers = detail.json()["request_headers"]
+        self.assertEqual(stored_headers["content-type"], "application/json")
+        self.assertEqual(stored_headers["x-ms-client-request-id"], "history-request-1")
         self.assertNotIn("authorization", stored_headers)
         self.assertNotIn("api-key", stored_headers)
         self.assertNotIn("cookie", stored_headers)
@@ -503,6 +523,19 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(snapshot.status_code, 200)
         self.assertEqual(snapshot.json()["query_parameters"], {"api-version": ["v1"]})
         self.assertIn('"browser-model"', snapshot.json()["body_text"])
+
+    def test_history_records_generated_client_request_id(self):
+        response = self.call(json={"model": "browser-model", "input": "generated id"})
+        record = self.history().json()["records"][0]
+        detail = self.client.get(
+            f"/api/history/{record['id']}",
+            headers={"X-Lab-Session": self.session},
+        )
+
+        self.assertEqual(
+            detail.json()["request_headers"]["x-ms-client-request-id"],
+            response.headers["x-ms-client-request-id"],
+        )
 
     def test_history_saves_binary_and_applies_count_retention(self):
         self.mode = "binary"
@@ -599,12 +632,46 @@ class ProxyTests(unittest.TestCase):
         response = self.call(path="/batches", json={"input_file_id": "file-123"})
         self.assertEqual(response.status_code, 403)
         record = self.history("POST", "/batches").json()["records"][0]
+        self.assertFalse(record["forwarded"])
+        self.assertTrue(record["forwarded_capture_available"])
         self.assertEqual(record["response_status"], 403)
         stored = self.client.get(
             f"/api/history/{record['id']}/request",
             headers={"X-Lab-Session": self.session},
         )
         self.assertEqual(stored.json()["input_file_id"], "file-123")
+
+
+class HistoryPersistenceTests(unittest.TestCase):
+    def test_initialize_preserves_existing_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "history.sqlite3"
+            first_store = HistoryStore(path)
+            first_store.initialize()
+            history_id, _ = first_store.create_record(
+                document_id="azure-openai-v1",
+                operation_id="createResponse",
+                method="POST",
+                path_template="/responses",
+                actual_path="/responses",
+                query_string="",
+                request_headers={"content-type": "application/json"},
+                request_content_type="application/json",
+                request_body=b'{"input":"persist me"}',
+            )
+
+            restarted_store = HistoryStore(path)
+            restarted_store.initialize()
+
+            total, records = restarted_store.list_records(
+                "azure-openai-v1", "POST", "/responses", 10, 0
+            )
+            self.assertEqual(total, 1)
+            self.assertEqual(records[0]["id"], history_id)
+            self.assertEqual(
+                restarted_store.get_request_body(history_id),
+                b'{"input":"persist me"}',
+            )
 
 
 class TokenTests(unittest.IsolatedAsyncioTestCase):

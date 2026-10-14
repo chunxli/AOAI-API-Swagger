@@ -9,7 +9,7 @@ import threading
 import uuid
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 PREVIEW_BYTES = 4096
 TEXT_CONTENT_TYPES = (
     "application/json",
@@ -76,6 +76,12 @@ class HistoryStore:
                     request_headers TEXT NOT NULL,
                     request_content_type TEXT NOT NULL,
                     request_body BLOB NOT NULL,
+                    forwarded_url TEXT NOT NULL DEFAULT '',
+                    forwarded_headers TEXT NOT NULL DEFAULT '{}',
+                    forwarded_content_type TEXT NOT NULL DEFAULT '',
+                    forwarded_body BLOB NOT NULL DEFAULT X'',
+                    forwarded_at TEXT,
+                    forwarded_state INTEGER CHECK (forwarded_state IN (0, 1)),
                     resource_name TEXT,
                     endpoint_type TEXT,
                     deployment_name TEXT,
@@ -105,7 +111,48 @@ class HistoryStore:
             row = connection.execute(
                 "SELECT value FROM history_meta WHERE key = 'schema_version'"
             ).fetchone()
-            if row is not None and int(row["value"]) != SCHEMA_VERSION:
+            schema_version = int(row["value"]) if row is not None else SCHEMA_VERSION
+            if schema_version == 1:
+                columns = {
+                    item["name"]
+                    for item in connection.execute("PRAGMA table_info(request_history)")
+                }
+                migrations = {
+                    "forwarded_url": "TEXT NOT NULL DEFAULT ''",
+                    "forwarded_headers": "TEXT NOT NULL DEFAULT '{}'",
+                    "forwarded_content_type": "TEXT NOT NULL DEFAULT ''",
+                    "forwarded_body": "BLOB NOT NULL DEFAULT X''",
+                    "forwarded_at": "TEXT",
+                }
+                for name, definition in migrations.items():
+                    if name not in columns:
+                        connection.execute(
+                            f"ALTER TABLE request_history ADD COLUMN {name} {definition}"
+                        )
+                connection.execute(
+                    "UPDATE history_meta SET value = ? WHERE key = 'schema_version'",
+                    ("2",),
+                )
+                schema_version = 2
+            if schema_version == 2:
+                columns = {
+                    item["name"]
+                    for item in connection.execute("PRAGMA table_info(request_history)")
+                }
+                if "forwarded_state" not in columns:
+                    connection.execute(
+                        """
+                        ALTER TABLE request_history
+                        ADD COLUMN forwarded_state INTEGER
+                        CHECK (forwarded_state IN (0, 1))
+                        """
+                    )
+                connection.execute(
+                    "UPDATE history_meta SET value = ? WHERE key = 'schema_version'",
+                    (str(SCHEMA_VERSION),),
+                )
+                schema_version = SCHEMA_VERSION
+            if schema_version != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Unsupported request history schema version {row['value']}."
                 )
@@ -146,8 +193,8 @@ class HistoryStore:
                 INSERT INTO request_history(
                     id, document_id, operation_id, method, path_template, actual_path,
                     query_string, request_headers, request_content_type, request_body,
-                    resource_name, endpoint_type, deployment_name, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    forwarded_state, resource_name, endpoint_type, deployment_name, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     history_id,
@@ -160,6 +207,7 @@ class HistoryStore:
                     json.dumps(request_headers, ensure_ascii=False, separators=(",", ":")),
                     request_content_type or "",
                     bytes(request_body),
+                    0,
                     resource_name,
                     endpoint_type,
                     deployment_name,
@@ -168,6 +216,37 @@ class HistoryStore:
             )
             connection.commit()
         return history_id, utc_now()
+
+    def record_forwarded_request(
+        self,
+        history_id,
+        *,
+        url,
+        headers,
+        content_type,
+        body,
+    ):
+        with self._lock, closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE request_history
+                SET forwarded_url = ?, forwarded_headers = ?,
+                    forwarded_content_type = ?, forwarded_body = ?, forwarded_at = ?,
+                    forwarded_state = 1
+                WHERE id = ?
+                """,
+                (
+                    url,
+                    json.dumps(headers, ensure_ascii=False, separators=(",", ":")),
+                    content_type or "",
+                    bytes(body),
+                    as_timestamp(utc_now()),
+                    history_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Unknown history record {history_id}.")
+            connection.commit()
 
     def append_response_chunk(self, history_id, sequence, body):
         if not body:
@@ -338,6 +417,7 @@ class HistoryStore:
                 """
                 SELECT id, operation_id, method, path_template, actual_path, query_string,
                        request_content_type, length(request_body) AS request_size,
+                       forwarded_url, forwarded_state,
                        resource_name, endpoint_type, deployment_name, response_status,
                        response_content_type, response_size, response_preview, duration_ms,
                        completed, storage_error, created_at, completed_at
@@ -352,6 +432,8 @@ class HistoryStore:
 
     def _record_summary(self, row):
         result = {key: row[key] for key in row.keys() if key != "response_preview"}
+        result["forwarded"] = bool(result.pop("forwarded_url", ""))
+        result["forwarded_capture_available"] = result.pop("forwarded_state") is not None
         result["completed"] = bool(result["completed"])
         preview = bytes(row["response_preview"] or b"")
         if not preview:
@@ -369,7 +451,11 @@ class HistoryStore:
                 """
                 SELECT id, document_id, operation_id, method, path_template, actual_path,
                        query_string, request_headers, request_content_type,
-                       length(request_body) AS request_size, resource_name, endpoint_type,
+                       length(request_body) AS request_size, forwarded_url,
+                       forwarded_headers, forwarded_content_type,
+                       length(forwarded_body) AS forwarded_size, forwarded_at,
+                       forwarded_state,
+                       resource_name, endpoint_type,
                        deployment_name, response_status, response_headers,
                        response_content_type, response_size, duration_ms, completed,
                        storage_error, created_at, completed_at
@@ -381,6 +467,7 @@ class HistoryStore:
             return None
         result = dict(row)
         result["request_headers"] = json.loads(result["request_headers"])
+        result["forwarded_headers"] = json.loads(result["forwarded_headers"])
         result["response_headers"] = json.loads(result["response_headers"])
         result["completed"] = bool(result["completed"])
         return result
@@ -392,6 +479,14 @@ class HistoryStore:
                 (history_id,),
             ).fetchone()
         return None if row is None else bytes(row["request_body"])
+
+    def get_forwarded_body(self, history_id):
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT forwarded_body FROM request_history WHERE id = ?",
+                (history_id,),
+            ).fetchone()
+        return None if row is None else bytes(row["forwarded_body"])
 
     def iter_response_body(self, history_id):
         connection = self._connect()
