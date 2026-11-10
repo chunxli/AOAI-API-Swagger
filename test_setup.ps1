@@ -176,7 +176,7 @@ try {
         Assert-Setup (Test-Path -LiteralPath (Join-Path $directory ".venv")) "Existing .venv was removed."
     }
 
-    Test-SetupCase "Dependency installer uses pinned Python requirements and public npm without scripts" {
+    Test-SetupCase "Dependency installer uses pinned Python requirements and configured npm without scripts" {
         $directory = Join-Path $fixture "dependencies"
         New-Item -ItemType Directory -Path (Join-Path $directory ".venv\Scripts") -Force | Out-Null
         New-Item -ItemType File -Path (Join-Path $directory ".venv\Scripts\python.exe") | Out-Null
@@ -190,7 +190,8 @@ try {
         Assert-Setup ($script:installCalls.Count -eq 3) "Incorrect dependency stages."
         Assert-Setup ($script:installCalls[1] -contains (Join-Path $directory "requirements-lock.txt")) "Missing lockfile."
         Assert-Setup ($script:installCalls[2] -contains "--ignore-scripts") "npm lifecycle scripts must stay disabled."
-        Assert-Setup ($script:installCalls[2] -contains "--registry=https://registry.npmjs.org") "Expected public npm source."
+        Assert-Setup (@($script:installCalls[2] | Where-Object { $_ -like "--registry*" }).Count -eq 0) "Setup must honor the configured npm registry."
+        Assert-Setup (@($script:installCalls[2] | Where-Object { $_ -like "--*ssl*" }).Count -eq 0) "Setup must not override npm TLS verification."
         Assert-Setup ($PWD.Path -eq $location) "Working directory was not restored."
     }
 

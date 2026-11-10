@@ -165,7 +165,7 @@ function Install-SetupDependencies {
     Push-Location $Directory
     try {
         Invoke-SetupCommand $Npm @(
-            "install", "--ignore-scripts", "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org"
+            "install", "--ignore-scripts", "--no-audit", "--no-fund"
         ) "Installing Swagger UI assets" | Out-Host
     } finally {
         Pop-Location

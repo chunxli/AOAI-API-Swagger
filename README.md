@@ -11,16 +11,20 @@
 
 **公开仓库下载入口：**
 
+只复制下面代码块中的命令，不要复制终端提示符（`PS C:\…>`、`>>`）、运行输出或报错文本。如果终端正在等待续行输入，先按 `Ctrl+C` 取消再粘贴。
+
 ```powershell
 $setup = Join-Path $env:TEMP ("aoai-setup-" + [guid]::NewGuid().ToString("N") + ".ps1")
 try {
-    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/chunxli/AOAI-API-Swagger/main/setup.ps1" -OutFile $setup -ErrorAction Stop
+    Invoke-WebRequest -UseBasicParsing -Uri ("https://raw.githubusercontent.com/chunxli/AOAI-API-Swagger/main/setup.ps1?nocache=" + [guid]::NewGuid().ToString("N")) -Headers @{ "Cache-Control" = "no-cache" } -OutFile $setup -ErrorAction Stop
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $setup
     if ($LASTEXITCODE -ne 0) { throw "Setup failed. See the error above." }
 } finally {
     if (Test-Path -LiteralPath $setup) { Remove-Item -LiteralPath $setup -Force }
 }
 ```
+
+每次下载使用唯一查询参数并请求不使用缓存，避免更新后短时间内仍运行旧脚本。如果刚更新后仍出现相同错误，请重新复制上面的完整命令，不要复用此前下载的脚本。
 
 仓库仍为 **Private** 时，匿名下载地址会返回 404。请先登录 GitHub，从 [setup.ps1](setup.ps1) 的文件页面下载脚本（无需先克隆整个仓库），在下载目录执行以下命令；克隆时仍需具有仓库访问权限，按 Git 凭据管理器的提示完成 GitHub 认证：
 
@@ -71,7 +75,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -CheckOnly
 - PATH 中存在多个同名程序（例如同时存在传统 Python Launcher 与 WindowsApps 的 `py.exe`）时，脚本按命令搜索顺序只选择第一个匹配路径，不会将多个路径拼成一条命令。
 - 缺少工具且找不到 `winget` 时，脚本会停止并提示安装 Microsoft Store 中的 **App Installer / 应用安装程序**，或手动安装下面列出的工具。已有全部工具时无需 winget。
 - winget 安装会接受相关软件及源协议，可能触发 UAC；组织禁用安装、要求重启或 PATH 尚未生效时会明确报错，处理后可重新执行。脚本不静默忽略失败。
-- 需要联网访问 GitHub、Python 包源、公共 npm registry、winget 源及 Azure 登录/管理服务；企业代理或包源认证需由当前环境配置。
+- 需要联网访问 GitHub、Python 包源、配置的 npm registry、winget 源及 Azure 登录/管理服务；安装脚本遵循 npm 已有的 registry、代理和 CA 配置，不强制切换到公共源。企业代理或包源认证需由当前环境配置。
 - 脚本不会修改已有仓库源码或删除不完整的 `.venv`。目录非空但不是本项目仓库时会拒绝使用；已有仓库请自行确认代码版本。重跑脚本会安装依赖并重启本站服务，当前进行中的请求可能中断。
 - 自动安装、登录及打开浏览器需要实际 Windows 环境和用户交互；`-CheckOnly` 只检查工具，不进行克隆、安装、Azure 登录或服务启动。
 
@@ -97,10 +101,14 @@ cd .\AOAI-API-Swagger
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
-npm install --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+npm install --ignore-scripts --no-audit --no-fund
 ```
 
 Python 依赖安装到项目的 `.venv`，npm 安装本地 Swagger UI 静态资源。仓库不包含 `package-lock.json`，首次安装请用 `npm install` 而不是 `npm ci`；生成的锁文件仅保留在本机。
+
+如果 npm 报 `ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE`，说明下载包时 TLS 握手失败，不是 Python 安装失败。先用 `npm config get registry` 检查当前包源；企业网络应使用组织批准的包源、代理及 CA 配置，不要通过 `strict-ssl=false` 或 `NODE_TLS_REJECT_UNAUTHORIZED=0` 关闭校验。修复网络配置或更新安装脚本后，可用 `-InstallDirectory` 指向原安装目录重跑，已有仓库和有效 `.venv` 会复用。
+
+如果包源返回 `EALLOWREMOTE` / `Fetching packages of type "remote" have been disabled`，表示包源策略禁止获取某些依赖。请联系管理员批准所需依赖或提供可用的受批准包源；脚本不会改用其他源绕过该策略。
 
 #### 3. 登录 Azure 并启动
 
