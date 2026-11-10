@@ -86,7 +86,7 @@ function Start-ServiceProcess {
     New-Item -ItemType Directory -Path $runtime -Force | Out-Null
     $process = Start-Process `
         -FilePath $python `
-        -ArgumentList ('"{0}"' -f $server) `
+        -ArgumentList ('-u "{0}" --background' -f $server) `
         -WorkingDirectory $PSScriptRoot `
         -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutLog `
@@ -124,6 +124,8 @@ function Stop-ServiceProcess {
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
     Write-Host "Swagger server stopped (PID $($process.Id))."
 }
+
+if ($MyInvocation.InvocationName -eq ".") { return }
 
 switch ($Action) {
     "start" {

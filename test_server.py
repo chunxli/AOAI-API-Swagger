@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from azure.core.credentials import AccessToken
 from azure.core.exceptions import ClientAuthenticationError
@@ -25,6 +25,7 @@ from server import (
     create_app,
     create_azure_cli_credential,
     discover_azure_environments,
+    hide_background_console,
     load_config,
     TokenManager,
     TokenProvider,
@@ -966,6 +967,49 @@ class EnvironmentDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                 "endpoint_type": "默认",
             }],
         )
+
+
+class BackgroundConsoleTests(unittest.TestCase):
+    def test_hides_the_service_console_and_checks_actual_visibility(self):
+        kernel = Mock()
+        user = Mock()
+        kernel.GetConsoleWindow.return_value = 0x123456789
+        user.IsWindowVisible.return_value = False
+        with (
+            patch("server.sys.platform", "win32"),
+            patch("ctypes.WinDLL", side_effect=[kernel, user], create=True),
+        ):
+            hide_background_console()
+        user.ShowWindow.assert_called_once_with(0x123456789, 0)
+        user.IsWindowVisible.assert_called_once_with(0x123456789)
+
+    def test_missing_console_and_non_windows_need_no_window_changes(self):
+        kernel = Mock()
+        kernel.GetConsoleWindow.return_value = 0
+        with (
+            patch("server.sys.platform", "win32"),
+            patch("ctypes.WinDLL", return_value=kernel, create=True) as load_library,
+        ):
+            hide_background_console()
+            self.assertEqual(load_library.call_count, 1)
+        with (
+            patch("server.sys.platform", "linux"),
+            patch("ctypes.WinDLL", create=True) as load_library,
+        ):
+            hide_background_console()
+            load_library.assert_not_called()
+
+    def test_visible_console_after_hiding_is_an_explicit_failure(self):
+        kernel = Mock()
+        user = Mock()
+        kernel.GetConsoleWindow.return_value = 123
+        user.IsWindowVisible.return_value = True
+        with (
+            patch("server.sys.platform", "win32"),
+            patch("ctypes.WinDLL", side_effect=[kernel, user], create=True),
+        ):
+            with self.assertRaisesRegex(OSError, "Unable to hide"):
+                hide_background_console()
 
 
 class ConfigTests(unittest.TestCase):

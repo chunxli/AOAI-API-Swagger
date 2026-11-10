@@ -1117,14 +1117,36 @@ def create_app(
     return app
 
 
+def hide_background_console():
+    if sys.platform != "win32":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetConsoleWindow.restype = wintypes.HWND
+    window = kernel32.GetConsoleWindow()
+    if not window:
+        return
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+    user32.IsWindowVisible.argtypes = (wintypes.HWND,)
+    user32.ShowWindow(window, 0)
+    if user32.IsWindowVisible(window):
+        raise OSError("Unable to hide the background service console window.")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--print-port", action="store_true", help="Print the validated listening port without starting.")
+    parser.add_argument("--background", action="store_true", help="Hide the Windows service console and retain file logging.")
     args = parser.parse_args()
     settings = load_config()
     if args.print_port:
         print(settings["port"])
         sys.exit(0)
+    if args.background:
+        hide_background_console()
     logging.basicConfig(level=logging.INFO)
     print(f"Swagger UI: http://127.0.0.1:{settings['port']}")
     print("No Azure request is sent until you explicitly test authentication or execute an operation.")

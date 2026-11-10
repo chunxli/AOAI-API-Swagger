@@ -137,6 +137,38 @@ Test-SetupCase "Failed repository update prevents dependency changes, sign-in an
     Assert-SetupThrows { Invoke-WebAppSetup -Directory $PSScriptRoot } "Updating repository failed"
 }
 
+Test-SetupCase "Background service hides its console and redirects unbuffered logs to files" {
+    . (Join-Path $PSScriptRoot "service.ps1")
+    $script:backgroundStarted = $false
+    function Assert-Prerequisites {}
+    function Get-ManagedProcess { return $null }
+    function Get-ConfiguredPort { return 9000 }
+    function Get-NetTCPConnection { return $null }
+    function New-Item {}
+    function Set-Content {
+        param($LiteralPath, $Value, $Encoding)
+        Assert-Setup ($LiteralPath -eq $pidFile -and $Value -eq 123) "Incorrect managed PID recording."
+    }
+    function Start-Process {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, $RedirectStandardOutput, $RedirectStandardError, [switch]$PassThru)
+        Assert-Setup ($FilePath -eq $python) "Unexpected service interpreter."
+        Assert-Setup ($ArgumentList -eq ('-u "{0}" --background' -f $server)) "Service must use unbuffered background mode."
+        Assert-Setup ($WindowStyle -eq "Hidden") "Service launch must hide the console."
+        Assert-Setup ($WorkingDirectory -eq $PSScriptRoot) "Incorrect service working directory."
+        Assert-Setup ($RedirectStandardOutput -eq $stdoutLog -and $RedirectStandardError -eq $stderrLog) "Service logs must go to files."
+        $script:backgroundStarted = $true
+        return [pscustomobject]@{ Id = 123; HasExited = $false }
+    }
+    function Wait-UntilHealthy {
+        param($Port, $Process)
+        Assert-Setup ($Port -eq 9000 -and $Process.Id -eq 123) "Service health check was bypassed."
+        return $true
+    }
+    function Stop-Process { throw "Must not stop any real process in the launch test." }
+    Start-ServiceProcess
+    Assert-Setup $script:backgroundStarted "Background service was not launched."
+}
+
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ("aoai-setup-test-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {

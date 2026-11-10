@@ -180,7 +180,7 @@ az login
 
 ## 启动与服务管理
 
-`start.ps1` 默认在后台启动，终端可以直接关闭。常用服务命令：
+`start.ps1` 默认在后台启动，不显示服务运行日志窗口，启动完成后终端可以直接关闭。安装/更新重启和 Windows 登录自启动均复用此后台模式；只有显式使用 `-Foreground` 才在终端显示运行日志。安装进度和 Azure 登录需要交互的窗口仍会保留。常用服务命令：
 
 ```powershell
 .\start.ps1                 # 后台启动；已运行时直接显示当前 PID
@@ -191,7 +191,12 @@ az login
 ```
 
 打开 **http://127.0.0.1:8765**。脚本可以从任意目录调用，并按自身目录寻找配置及依赖。
-后台 PID 和 stdout/stderr 日志保存在 `.runtime`；停止和重启会校验 PID 对应的命令行，只管理本站进程。
+后台 PID 和 stdout/stderr 日志保存在 `.runtime`，日志直接写入文件，不在服务窗口滚动显示；停止和重启会校验 PID 对应的命令行，只管理本站进程。后台服务保留隐藏控制台供 Azure CLI 子进程继承，避免无控制台启动方式导致 CLI 另外弹窗。需要排错时可手动查看：
+
+```powershell
+Get-Content -LiteralPath .\.runtime\server.stderr.log -Tail 80
+Get-Content -LiteralPath .\.runtime\server.stdout.log -Tail 80
+```
 
 ## 登录 Windows 后自动启动
 
