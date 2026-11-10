@@ -21,6 +21,52 @@ function Test-SetupCase {
     Write-Host "[PASS] $Name"
 }
 
+Test-SetupCase "Multiple executable matches return only the first path" {
+    function Get-Command {
+        param($Name, $CommandType, $ErrorAction)
+        Assert-Setup ($CommandType -eq "Application") "Only application commands should be discovered."
+        return @(
+            [pscustomobject]@{ Source = "C:\Windows\py.exe" }
+            [pscustomobject]@{ Source = "C:\Example\WindowsApps\py.exe" }
+        )
+    }
+    $command = Find-SetupCommand @("py.exe")
+    Assert-Setup ($command -is [string]) "Command discovery must return one path, not an array."
+    Assert-Setup ($command -eq "C:\Windows\py.exe") "Executable search order was not preserved."
+}
+
+Test-SetupCase "Command discovery tries alternate names when the first is missing" {
+    function Get-Command {
+        param($Name, $CommandType, $ErrorAction)
+        if ($Name -eq "az.exe") { return [pscustomobject]@{ Source = "C:\Example\az.exe" } }
+    }
+    Assert-Setup ((Find-SetupCommand @("az.cmd", "az.exe")) -eq "C:\Example\az.exe") "Alternate executable was not found."
+    Assert-Setup ($null -eq (Find-SetupCommand @("missing.exe"))) "Missing commands must not be reported as installed."
+}
+
+Test-SetupCase "Python detection invokes one launcher when multiple are installed" {
+    function Get-Command {
+        param($Name, $CommandType, $ErrorAction)
+        if ($Name -eq "py.exe") {
+            return @(
+                [pscustomobject]@{ Source = "Invoke-MockSetupLauncher" }
+                [pscustomobject]@{ Source = "unexpected-second-launcher.exe" }
+            )
+        }
+    }
+    function Invoke-MockSetupLauncher {
+        Assert-Setup ($args[0] -eq "-3" -and $args[1] -eq "-c") "Incorrect Python launcher arguments."
+        $global:LASTEXITCODE = 0
+        return "Invoke-MockSetupPython"
+    }
+    function Invoke-MockSetupPython {
+        Assert-Setup ($args[0] -eq "-c" -and $args[1].Contains("sys.version_info >= (3, 10)")) "Python version was not checked."
+        $global:LASTEXITCODE = 0
+        return "Invoke-MockSetupPython"
+    }
+    Assert-Setup ((Find-SetupPython) -eq "Invoke-MockSetupPython") "Python launcher discovery failed."
+}
+
 Test-SetupCase "Native command failures are not ignored" {
     $shell = (Get-Process -Id $PID).Path
     Assert-SetupThrows {

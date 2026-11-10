@@ -10,7 +10,8 @@ $ErrorActionPreference = "Stop"
 function Find-SetupCommand {
     param([string[]]$Names)
     foreach ($name in $Names) {
-        $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
+        $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
         if ($command) { return $command.Source }
     }
 }
