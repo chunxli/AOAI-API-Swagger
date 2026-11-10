@@ -6,12 +6,15 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
 
 from azure.core.credentials import AccessToken
+from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import CredentialUnavailableError
 from fastapi.testclient import TestClient
 import httpx
@@ -579,6 +582,18 @@ class ProxyTests(unittest.TestCase):
         self.assertIn("Entra ID", response.json()["error"]["message"])
         self.assertFalse(self.requests)
 
+    def test_environment_auth_failure_returns_json_without_discovery(self):
+        self.credential.failure = True
+        response = self.client.get("/api/azure-environments", headers={
+            "X-Lab-Session": self.session,
+        }, params={
+            "tenant_id": "11111111-1111-1111-1111-111111111111",
+            "subscription_id": "22222222-2222-2222-2222-222222222222",
+        })
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("管理令牌", response.json()["error"]["message"])
+        self.assertFalse(self.requests)
+
     def test_network_timeout_and_redirect_do_not_retry(self):
         for mode, expected in [("timeout", 504), ("network", 502), ("redirect", 502)]:
             self.mode = mode
@@ -790,13 +805,53 @@ class HistoryPersistenceTests(unittest.TestCase):
 
 
 class TokenTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cli_localized_stderr_is_an_auth_error_not_a_decode_error(self):
+        class FailedCliProcess:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"ERROR: authentication failed\xa0please sign in"
+
+        with (
+            patch("shutil.which", return_value="offline-az"),
+            patch("asyncio.create_subprocess_exec", return_value=FailedCliProcess()),
+            patch("subprocess.check_output", side_effect=subprocess.CalledProcessError(
+                1, "offline-az", stderr="ERROR: authentication failed\u00a0please sign in",
+            )),
+        ):
+            credential = create_azure_cli_credential("offline-tenant", None)
+            try:
+                with self.assertRaises((CredentialUnavailableError, ClientAuthenticationError)):
+                    await credential.get_token("https://management.azure.com/.default")
+            finally:
+                await credential.close()
+
+    async def test_cli_execution_and_cleanup_do_not_block_the_event_loop(self):
+        loop_thread = threading.get_ident()
+
+        def get_token(*scopes):
+            self.assertNotEqual(threading.get_ident(), loop_thread)
+            return AccessToken("offline-test-token", int(time.time()) + 3600)
+
+        def close():
+            self.assertNotEqual(threading.get_ident(), loop_thread)
+
+        with patch("server.AzureCliCredential") as factory:
+            factory.return_value.get_token.side_effect = get_token
+            factory.return_value.close.side_effect = close
+            credential = create_azure_cli_credential("offline-tenant", None)
+            token = await credential.get_token("https://management.azure.com/.default")
+            self.assertEqual(token.token, "offline-test-token")
+            await credential.close()
+            factory.return_value.close.assert_called_once()
+
     async def test_cli_credential_uses_subscription_without_tenant(self):
         credential = create_azure_cli_credential(
             "11111111-1111-1111-1111-111111111111",
             "22222222-2222-2222-2222-222222222222",
         )
-        self.assertEqual(credential.tenant_id, "")
-        self.assertEqual(credential.subscription, "22222222-2222-2222-2222-222222222222")
+        self.assertEqual(credential.credential.tenant_id, "")
+        self.assertEqual(credential.credential.subscription, "22222222-2222-2222-2222-222222222222")
 
     async def test_concurrent_requests_share_token(self):
         credential = FakeCredential()

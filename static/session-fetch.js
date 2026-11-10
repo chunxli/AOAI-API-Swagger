@@ -5,6 +5,20 @@
 }(typeof globalThis === "object" ? globalThis : this, function sessionFetchFactory() {
   "use strict";
 
+  const readJsonResponse = async (response) => {
+    let result;
+    try {
+      result = await response.json();
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      throw new Error(
+        `本地服务返回非 JSON 响应（HTTP ${response.status}）。请查看安装目录下 .runtime 中的 server.stderr.log。`,
+      );
+    }
+    if (!response.ok) throw new Error(result?.error?.message || `HTTP ${response.status}`);
+    return result;
+  };
+
   const createSessionFetch = ({ fetchImpl, getToken, setToken }) => {
     if (typeof fetchImpl !== "function"
       || typeof getToken !== "function"
@@ -26,7 +40,7 @@
       if (!statusResponse.ok) {
         throw new Error(`本地服务重启后无法刷新会话：HTTP ${statusResponse.status}`);
       }
-      const status = await statusResponse.json();
+      const status = await readJsonResponse(statusResponse);
       if (!status.session_token) {
         throw new Error("本地服务返回的会话信息无效。");
       }
@@ -36,5 +50,5 @@
     };
   };
 
-  return { createSessionFetch };
+  return { createSessionFetch, readJsonResponse };
 }));

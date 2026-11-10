@@ -37,7 +37,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 脚本会依次执行：
 
 1. **Pre-check / 工具安装**：检查 Windows、Git、Python 3.10+、Node.js/npm、Azure CLI；缺失时通过 winget 安装 Git、Python 3.12、Node.js LTS 或 Azure CLI，刷新当前进程的 PATH。
-2. **Clone**：默认克隆到 `%LOCALAPPDATA%\AzureOpenAILab`；在已有项目目录运行脚本时复用当前仓库，不自动 pull、reset 或覆盖本地改动。
+2. **Clone / Update**：首次默认克隆到 `%LOCALAPPDATA%\AzureOpenAILab`；已有本项目仓库时，确认位于 `main` 且工作区干净，再执行 `git pull --ff-only --no-rebase origin main` 更新代码。在已有项目目录运行脚本时使用该目录。
 3. **Install**：创建项目 `.venv`、安装固定的 Python 依赖和本地 Swagger UI 静态资源。
 4. **Azure 登录**：已有有效登录则复用，否则执行 `az login`。验证 ARM 令牌时不输出 Token，不修改 CLI 默认订阅，也不会创建 Azure 资源或调用模型。
 5. **Start**：启动或重启本站后台服务，验证健康状态，再打开浏览器。页面自动发现账户、Endpoint 和模型部署；**无需创建配置文件**。
@@ -76,8 +76,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -CheckOnly
 - 缺少工具且找不到 `winget` 时，脚本会停止并提示安装 Microsoft Store 中的 **App Installer / 应用安装程序**，或手动安装下面列出的工具。已有全部工具时无需 winget。
 - winget 安装会接受相关软件及源协议，可能触发 UAC；组织禁用安装、要求重启或 PATH 尚未生效时会明确报错，处理后可重新执行。脚本不静默忽略失败。
 - 需要联网访问 GitHub、Python 包源、配置的 npm registry、winget 源及 Azure 登录/管理服务；安装脚本遵循 npm 已有的 registry、代理和 CA 配置，不强制切换到公共源。企业代理或包源认证需由当前环境配置。
-- 脚本不会修改已有仓库源码或删除不完整的 `.venv`。目录非空但不是本项目仓库时会拒绝使用；已有仓库请自行确认代码版本。重跑脚本会安装依赖并重启本站服务，当前进行中的请求可能中断。
-- 自动安装、登录及打开浏览器需要实际 Windows 环境和用户交互；`-CheckOnly` 只检查工具，不进行克隆、安装、Azure 登录或服务启动。
+- 脚本只会快进更新已有本项目仓库的 `main` 分支，不会强制覆盖、自动 stash、切换分支或删除不完整的 `.venv`。目录非空但不是本项目仓库时会拒绝使用。重跑脚本会更新代码、安装依赖并重启本站服务，当前进行中的请求可能中断。
+- 自动安装、登录及打开浏览器需要实际 Windows 环境和用户交互；`-CheckOnly` 只检查工具，不进行克隆、代码更新、安装、Azure 登录或服务启动。
+
+### 更新已安装的版本
+
+**再次运行顶部 Quick Start 即可更新并重启**：下载最新版安装脚本后，它会检测默认安装目录中的已有仓库，依次更新代码、同步依赖、检查 Azure 登录，再重启服务并验证健康状态。即使没有新提交，也会同步依赖并重启，便于重试未完成的安装。无需删除原安装目录。
+
+如果首次使用了自定义目录，请在下载最新版 `setup.ps1` 后指定同一目录：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDirectory "$env:USERPROFILE\Dev\AzureOpenAILab"
+```
+
+旧版安装脚本本身没有自动更新逻辑，首次升级时请重新下载最新版，不要只运行旧目录里的旧脚本。被 Git 忽略的 `config.json`、`.runtime`、`.venv` 和 `node_modules` 会保留；依赖安装阶段会更新虚拟环境和 npm 包。
+
+发现本地修改（含暂存或未跟踪文件）、非 `main` 分支、分支分叉或拉取失败时，脚本明确停止，不会自动解决冲突，也不会进入依赖安装和服务重启。先自行备份或处理本地改动及 Git 问题后重跑。若代码更新成功但后续依赖安装或登录失败，脚本同样不会重启正在运行的服务，但不会自动回滚已更新的代码或依赖。
 
 ### 手动 setup（可选）
 
@@ -139,6 +153,8 @@ az login
   ```
 
 - 账户为空、登录失效或缺少读取权限时，页面会明确报错；根据提示执行 `az login`、指定租户登录或申请相应权限后刷新。全量 Swagger Schema 不代表所选模型、区域和账户权限支持全部接口。
+- Windows 下使用同步 `AzureCliCredential` 在线程中获取令牌，按系统编码处理 CLI 输出，避免异步 SDK 将本地编码的错误输出强行按 UTF-8 解码而导致 500；不会阻塞 WebApp 的异步事件循环。真实登录错误仍会明确返回，不会伪装成认证成功。
+- 页面遇到非 JSON 错误响应时会显示 HTTP 状态码和日志位置，而不是 `Unexpected token`。请查看安装目录下 `.runtime/server.stderr.log` 的 Traceback；分享日志前删除 Token 等敏感内容。
 
 参考：[AzureCliCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.azureclicredential?view=azure-python)、[az account](https://learn.microsoft.com/en-us/cli/azure/account?view=azure-cli-latest)。
 

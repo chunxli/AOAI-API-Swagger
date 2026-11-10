@@ -106,7 +106,19 @@ function Initialize-SetupRepository {
         if ([string]$origin -notin @($repository, "https://github.com/chunxli/AOAI-API-Swagger", "git@github.com:chunxli/AOAI-API-Swagger.git")) {
             throw "Existing directory has a different origin. Choose an empty -InstallDirectory; no existing files were overwritten."
         }
-        Write-Host "Reusing existing checkout; no pull, reset, or checkout will be performed."
+        $branch = Invoke-SetupCommand $Git @("-C", $Directory, "branch", "--show-current") "Checking current branch"
+        if ([string]$branch -ne "main") {
+            throw "Automatic updates require the main branch. Resolve the current branch or detached HEAD manually; setup will not switch branches."
+        }
+        $changes = Invoke-SetupCommand $Git @("-C", $Directory, "status", "--porcelain", "--untracked-files=normal") "Checking local changes"
+        if ($changes) {
+            throw "Existing checkout has local changes. Commit, back up, or move them before retrying; setup will not reset, stash, or overwrite them."
+        }
+        Write-Host "Existing installation detected. Updating main from origin (fast-forward only)."
+        Invoke-SetupCommand $Git @(
+            "-C", $Directory, "pull", "--ff-only", "--no-rebase", "origin", "main"
+        ) "Updating repository" | Out-Host
+        Write-Host "[OK] Application code is up to date."
     }
     foreach ($required in @("server.py", "start.ps1", "service.ps1", "requirements-lock.txt", "package.json")) {
         if (-not (Test-Path -LiteralPath (Join-Path $Directory $required) -PathType Leaf)) {
@@ -206,10 +218,10 @@ function Invoke-WebAppSetup {
     Write-Host "Install directory: $Directory"
     $tools = Get-SetupTools -Install:(-not $PreflightOnly)
     if ($PreflightOnly) {
-        Write-Host "Preflight passed. No clone, installation, login, startup, or settings changes were performed."
+        Write-Host "Preflight passed. No clone, update, installation, login, startup, or settings changes were performed."
         return
     }
-    Write-Host "[1/4] Preparing repository (private repositories require GitHub access)."
+    Write-Host "[1/4] Cloning or updating repository (private repositories require GitHub access)."
     Initialize-SetupRepository $tools["Git.Git"] $Directory
     Write-Host "[2/4] Installing project dependencies."
     Install-SetupDependencies $tools["Python.Python.3.12"] $tools["OpenJS.NodeJS.LTS"] $Directory

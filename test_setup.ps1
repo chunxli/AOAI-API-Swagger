@@ -128,6 +128,15 @@ Test-SetupCase "Full setup executes repository, dependencies, login, and start i
     Assert-Setup (($script:stages -join ",") -eq "clone,install,login,start") "Incorrect setup order."
 }
 
+Test-SetupCase "Failed repository update prevents dependency changes, sign-in and restart" {
+    function Get-SetupTools { return @{} }
+    function Initialize-SetupRepository { throw "Updating repository failed" }
+    function Install-SetupDependencies { throw "Must not install dependencies" }
+    function Connect-SetupAzure { throw "Must not sign in" }
+    function Start-SetupApplication { throw "Must not restart service" }
+    Assert-SetupThrows { Invoke-WebAppSetup -Directory $PSScriptRoot } "Updating repository failed"
+}
+
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ("aoai-setup-test-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {
@@ -146,15 +155,72 @@ try {
         Assert-Setup (Test-Path -LiteralPath (Join-Path $directory "server.py")) "Clone not validated."
     }
 
-    Test-SetupCase "Existing checkout is reused without pull or destructive changes" {
+    Test-SetupCase "Clean existing checkout updates main with a fast-forward-only pull" {
+        $directory = Join-Path $fixture "fresh"
+        $script:pullCount = 0
+        function Invoke-SetupCommand {
+            param($Command, $Arguments, $Description)
+            if ($Arguments -contains "rev-parse") { return $directory }
+            if ($Arguments -contains "get-url") { return "https://github.com/chunxli/AOAI-API-Swagger.git" }
+            if ($Arguments -contains "branch") { return "main" }
+            if ($Arguments -contains "status") {
+                Assert-Setup ($Arguments -contains "--porcelain") "Must check local changes."
+                return
+            }
+            if ($Arguments -contains "pull") {
+                Assert-Setup (($Arguments -join "|") -eq "-C|$directory|pull|--ff-only|--no-rebase|origin|main") "Unsafe or unexpected update command."
+                $script:pullCount++
+                return
+            }
+            throw "Unexpected Git operation."
+        }
+        Initialize-SetupRepository "mock-git" $directory
+        Assert-Setup ($script:pullCount -eq 1) "Existing code was not updated."
+    }
+
+    Test-SetupCase "Local tracked, staged or untracked changes stop automatic updates" {
+        $directory = Join-Path $fixture "fresh"
+        foreach ($change in @(" M server.py", "M  server.py", "?? local-note.txt")) {
+            $script:workingTreeChange = $change
+            function Invoke-SetupCommand {
+                param($Command, $Arguments, $Description)
+                if ($Arguments -contains "rev-parse") { return $directory }
+                if ($Arguments -contains "get-url") { return "https://github.com/chunxli/AOAI-API-Swagger.git" }
+                if ($Arguments -contains "branch") { return "main" }
+                if ($Arguments -contains "status") { return $script:workingTreeChange }
+                throw "Must not pull or modify a dirty checkout."
+            }
+            Assert-SetupThrows { Initialize-SetupRepository "mock-git" $directory } "local changes"
+        }
+    }
+
+    Test-SetupCase "Non-main branches and detached HEAD are not switched or updated" {
+        $directory = Join-Path $fixture "fresh"
+        foreach ($branch in @("feature/local-work", "")) {
+            $script:currentBranch = $branch
+            function Invoke-SetupCommand {
+                param($Command, $Arguments, $Description)
+                if ($Arguments -contains "rev-parse") { return $directory }
+                if ($Arguments -contains "get-url") { return "https://github.com/chunxli/AOAI-API-Swagger.git" }
+                if ($Arguments -contains "branch") { return $script:currentBranch }
+                throw "Must not update another branch."
+            }
+            Assert-SetupThrows { Initialize-SetupRepository "mock-git" $directory } "main branch"
+        }
+    }
+
+    Test-SetupCase "Pull failures are surfaced without reset, checkout or stash" {
         $directory = Join-Path $fixture "fresh"
         function Invoke-SetupCommand {
             param($Command, $Arguments, $Description)
             if ($Arguments -contains "rev-parse") { return $directory }
             if ($Arguments -contains "get-url") { return "https://github.com/chunxli/AOAI-API-Swagger.git" }
-            throw "Unexpected Git operation."
+            if ($Arguments -contains "branch") { return "main" }
+            if ($Arguments -contains "status") { return }
+            if ($Arguments -contains "pull") { throw "Updating repository failed (exit 1)" }
+            throw "Unexpected destructive Git operation."
         }
-        Initialize-SetupRepository "mock-git" $directory
+        Assert-SetupThrows { Initialize-SetupRepository "mock-git" $directory } "Updating repository failed"
     }
 
     Test-SetupCase "Existing directory with another origin is rejected" {
@@ -166,6 +232,83 @@ try {
         }
         Assert-SetupThrows { Initialize-SetupRepository "mock-git" $directory } "different origin"
         Assert-Setup (Test-Path -LiteralPath (Join-Path $directory "server.py")) "Existing files removed."
+    }
+
+    Test-SetupCase "Real Git clone and update preserve ignored data and reject dirty or divergent checkouts" {
+        $git = Find-SetupCommand @("git.exe")
+        Assert-Setup ([bool]$git) "Git is required for the offline repository tests."
+        $invokeNative = ${function:Invoke-SetupCommand}
+        $remote = Join-Path $fixture "origin.git"
+        $seed = Join-Path $fixture "seed"
+        $directory = Join-Path $fixture "installed app"
+        $remoteUri = ([uri]($remote + "\")).AbsoluteUri
+        function Invoke-SetupCommand {
+            param($Command, $Arguments, $Description)
+            if ($Arguments -contains "clone" -or $Arguments -contains "pull") {
+                $Arguments = @(
+                    "-c", "protocol.https.allow=never",
+                    "-c", "url.$remoteUri.insteadOf=https://github.com/chunxli/AOAI-API-Swagger.git"
+                ) + $Arguments
+            }
+            & $invokeNative $Command $Arguments $Description
+        }
+        function Save-SetupFixtureCommit {
+            param($Directory, $Message)
+            Invoke-SetupCommand $git @("-C", $Directory, "add", "--all") "Staging fixture" | Out-Host
+            Invoke-SetupCommand $git @(
+                "-C", $Directory, "-c", "user.name=Setup Test", "-c", "user.email=setup@example.test",
+                "-c", "commit.gpgsign=false", "commit", "-m", $Message,
+                "-m", "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+            ) "Committing fixture" | Out-Host
+        }
+        Invoke-SetupCommand $git @("init", "--bare", "--initial-branch=main", $remote) "Creating offline remote" | Out-Host
+        Invoke-SetupCommand $git @("init", "--initial-branch=main", $seed) "Creating fixture source" | Out-Host
+        foreach ($name in @("server.py", "start.ps1", "service.ps1", "requirements-lock.txt", "package.json")) {
+            Set-Content -LiteralPath (Join-Path $seed $name) -Value "initial" -Encoding ASCII
+        }
+        Set-Content -LiteralPath (Join-Path $seed ".gitignore") -Value @(
+            "config.json", ".runtime/", ".venv/", "node_modules/"
+        ) -Encoding ASCII
+        Save-SetupFixtureCommit $seed "Initial fixture"
+        Invoke-SetupCommand $git @("-C", $seed, "remote", "add", "origin", $remote) "Connecting offline remote" | Out-Host
+        Invoke-SetupCommand $git @("-C", $seed, "push", "origin", "main") "Publishing fixture" | Out-Host
+        Initialize-SetupRepository $git $directory
+        $configPath = Join-Path $directory "config.json"
+        Set-Content -LiteralPath $configPath -Value '{"port":9000}' -Encoding ASCII
+        $configHash = (Get-FileHash -LiteralPath $configPath).Hash
+        foreach ($name in @(".runtime", ".venv", "node_modules")) {
+            $localDirectory = Join-Path $directory $name
+            New-Item -ItemType Directory -Path $localDirectory | Out-Null
+            Set-Content -LiteralPath (Join-Path $localDirectory "preserved.txt") -Value "keep" -Encoding ASCII
+        }
+        Set-Content -LiteralPath (Join-Path $seed "server.py") -Value "updated" -Encoding ASCII
+        Save-SetupFixtureCommit $seed "Update fixture"
+        Invoke-SetupCommand $git @("-C", $seed, "push", "origin", "main") "Publishing update" | Out-Host
+        Initialize-SetupRepository $git $directory
+        $expected = Invoke-SetupCommand $git @("-C", $seed, "rev-parse", "HEAD") "Reading remote fixture revision"
+        $updated = Invoke-SetupCommand $git @("-C", $directory, "rev-parse", "HEAD") "Reading installed revision"
+        Assert-Setup ($updated -eq $expected) "Existing code did not reach the new commit."
+        Initialize-SetupRepository $git $directory
+        Assert-Setup ((Get-FileHash -LiteralPath $configPath).Hash -eq $configHash) "Local configuration was changed."
+        foreach ($name in @(".runtime", ".venv", "node_modules")) {
+            Assert-Setup (Test-Path -LiteralPath (Join-Path $directory "$name\preserved.txt")) "Ignored installation data was removed."
+        }
+        $sourcePath = Join-Path $directory "server.py"
+        $cleanSource = Get-Content -LiteralPath $sourcePath -Raw
+        Add-Content -LiteralPath $sourcePath -Value "local edit" -Encoding ASCII
+        Assert-SetupThrows { Initialize-SetupRepository $git $directory } "local changes"
+        Assert-Setup ((Get-Content -LiteralPath $sourcePath -Raw).Contains("local edit")) "Local edits were lost."
+        Set-Content -LiteralPath $sourcePath -Value $cleanSource -NoNewline -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $directory "service.ps1") -Value "local commit" -Encoding ASCII
+        Save-SetupFixtureCommit $directory "Local fixture work"
+        $before = Invoke-SetupCommand $git @("-C", $directory, "rev-parse", "HEAD") "Reading local fixture revision"
+        Set-Content -LiteralPath (Join-Path $seed "service.ps1") -Value "remote commit" -Encoding ASCII
+        Save-SetupFixtureCommit $seed "Divergent fixture update"
+        Invoke-SetupCommand $git @("-C", $seed, "push", "origin", "main") "Publishing divergent update" | Out-Host
+        Assert-SetupThrows { Initialize-SetupRepository $git $directory } "Updating repository failed"
+        $after = Invoke-SetupCommand $git @("-C", $directory, "rev-parse", "HEAD") "Checking preserved revision"
+        Assert-Setup ($before -eq $after) "Divergent local commits were changed."
+        Assert-Setup (-not (Test-Path -LiteralPath (Join-Path $directory ".git\MERGE_HEAD"))) "Update left a merge in progress."
     }
 
     Test-SetupCase "Incomplete virtual environment is not deleted or silently replaced" {

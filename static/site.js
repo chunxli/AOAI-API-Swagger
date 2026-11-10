@@ -1,6 +1,7 @@
 "use strict";
 
 async function initialize() {
+  const readLocalJson = window.AzureOpenAISessionFetch.readJsonResponse;
   const setHeaderStatus = (state, text) => {
     const dot = document.getElementById("header-status-dot");
     dot.className = `status-dot ${state}`;
@@ -13,8 +14,7 @@ async function initialize() {
   };
 
   const response = await fetch("/api/status");
-  if (!response.ok) throw new Error(`无法读取本地配置：HTTP ${response.status}`);
-  const status = await response.json();
+  const status = await readLocalJson(response);
   document.getElementById("tenant").textContent = status.tenant_id;
   document.getElementById("metrics").textContent =
     `${status.tag_count} API 分类 · ${status.operation_count} 操作 · OpenAPI ${status.schema_version} · 上传上限 ${status.max_upload_mb} MiB`;
@@ -326,8 +326,7 @@ async function initialize() {
         headers: { "X-Lab-Session": status.session_token },
         signal,
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error?.message || `HTTP ${response.status}`);
+      const result = await readLocalJson(response);
       const currentAccount = selectedAccount();
       if (
         requestId !== environmentRequestId
@@ -410,8 +409,7 @@ async function initialize() {
       const response = await fetch("/api/azure-accounts", {
         headers: { "X-Lab-Session": status.session_token },
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error?.message || `HTTP ${response.status}`);
+      const result = await readLocalJson(response);
       accounts = result.accounts;
       if (!accounts.length) {
         throw new Error("Azure CLI 中没有可用订阅。请先运行 az login。");
@@ -522,8 +520,7 @@ async function initialize() {
           subscription_id: account.subscription_id,
         }),
       });
-      const result = await auth.json();
-      if (!auth.ok) throw new Error(result.error?.message || `HTTP ${auth.status}`);
+      const result = await readLocalJson(auth);
       if (typeof result.access_token !== "string" || !result.access_token) {
         throw new Error("认证响应未包含有效的访问令牌。");
       }
@@ -799,9 +796,7 @@ async function initialize() {
   });
   const fetchLocalJson = async (url, options = {}) => {
     const response = await sessionFetch(url, options);
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error?.message || `HTTP ${response.status}`);
-    return result;
+    return readLocalJson(response);
   };
   const startupToggle = document.getElementById("startup-enabled");
   const startupRefresh = document.getElementById("refresh-startup");
@@ -1015,10 +1010,7 @@ async function initialize() {
       const response = await sessionFetch(
         `/api/history/${historyId}/${direction}?download=true`,
       );
-      if (!response.ok) {
-        const result = await response.json();
-        throw new Error(result.error?.message || `HTTP ${response.status}`);
-      }
+      if (!response.ok) await readLocalJson(response);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -1567,8 +1559,7 @@ async function initialize() {
     explorerRetry.hidden = true;
     try {
       const response = await fetch(collection.schema_url);
-      const spec = await response.json();
-      if (!response.ok) throw new Error(spec.error?.message || `HTTP ${response.status}`);
+      const spec = await readLocalJson(response);
       if (spec["x-lab-collection"]?.document_id !== documentInfo.id
         || spec["x-lab-collection"]?.id !== collection.id || !spec.paths) {
         throw new Error("返回的 Schema 与所选集合不匹配。");
@@ -1613,8 +1604,7 @@ async function initialize() {
     updateExplorerControls();
     try {
       const response = await fetch("/api/explorer");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const catalog = await response.json();
+      const catalog = await readLocalJson(response);
       if (!catalog.documents?.length) throw new Error("没有可用的 API 文档。");
       documents = catalog.documents;
       documentSelect.replaceChildren();

@@ -18,8 +18,7 @@ from urllib.parse import parse_qsl, quote, unquote, urlsplit
 import uuid
 
 from azure.core.exceptions import ClientAuthenticationError
-from azure.identity import CredentialUnavailableError
-from azure.identity.aio import AzureCliCredential
+from azure.identity import AzureCliCredential, CredentialUnavailableError
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -362,12 +361,24 @@ class TokenManager:
         await asyncio.gather(*(credential.close() for credential in credentials.values()))
 
 
+class ThreadedAzureCliCredential:
+    def __init__(self, credential):
+        self.credential = credential
+
+    async def get_token(self, *scopes):
+        return await asyncio.to_thread(self.credential.get_token, *scopes)
+
+    async def close(self):
+        await asyncio.to_thread(self.credential.close)
+
+
 def create_azure_cli_credential(tenant_id, subscription_id):
-    return AzureCliCredential(
+    # The synchronous SDK handles Windows CLI output using the system encoding.
+    return ThreadedAzureCliCredential(AzureCliCredential(
         tenant_id="" if subscription_id else tenant_id,
         subscription=subscription_id,
         process_timeout=30,
-    )
+    ))
 
 
 def operation_routes(spec):

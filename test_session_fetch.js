@@ -2,7 +2,36 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createSessionFetch } = require("./static/session-fetch.js");
+const { createSessionFetch, readJsonResponse } = require("./static/session-fetch.js");
+
+test("reports plain-text server failures with HTTP status instead of JSON parse errors", async () => {
+  await assert.rejects(
+    () => readJsonResponse(new Response("Internal Server Error", { status: 500 })),
+    /HTTP 500.*server\.stderr\.log/,
+  );
+});
+
+test("preserves structured API errors and successful JSON responses", async () => {
+  await assert.rejects(
+    () => readJsonResponse(new Response(JSON.stringify({
+      error: { message: "无法获取 Azure 管理令牌。" },
+    }), { status: 401 })),
+    /无法获取 Azure 管理令牌/,
+  );
+  assert.deepEqual(await readJsonResponse(new Response('{"accounts":[]}')), { accounts: [] });
+});
+
+test("rejects malformed successful responses without hiding aborted requests", async () => {
+  await assert.rejects(
+    () => readJsonResponse(new Response("<html>not JSON</html>")),
+    /HTTP 200/,
+  );
+  const aborted = new DOMException("Request aborted", "AbortError");
+  await assert.rejects(
+    () => readJsonResponse({ json: async () => { throw aborted; } }),
+    (error) => error === aborted,
+  );
+});
 
 test("refreshes a stale local session after the site restarts", async () => {
   let token = "old-session";
