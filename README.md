@@ -9,7 +9,7 @@
 
 **Windows 一键安装并启动**：在普通 PowerShell 窗口粘贴以下整段命令。无需预先安装 Git、Python、Node.js 或 Azure CLI；缺少的工具由 Windows 的 `winget` 安装。安装器可能请求管理员确认，Azure 登录可能要求浏览器交互或 MFA，这些不能自动跳过。
 
-**公开仓库下载入口：**
+**仓库已公开，可直接运行，无需登录 GitHub：**
 
 只复制下面代码块中的命令，不要复制终端提示符（`PS C:\…>`、`>>`）、运行输出或报错文本。如果终端正在等待续行输入，先按 `Ctrl+C` 取消再粘贴。
 
@@ -26,7 +26,9 @@ try {
 
 每次下载使用唯一查询参数并请求不使用缓存，避免更新后短时间内仍运行旧脚本。如果刚更新后仍出现相同错误，请重新复制上面的完整命令，不要复用此前下载的脚本。
 
-仓库仍为 **Private** 时，匿名下载地址会返回 404。请先登录 GitHub，从 [setup.ps1](setup.ps1) 的文件页面下载脚本（无需先克隆整个仓库），在下载目录执行以下命令；克隆时仍需具有仓库访问权限，按 Git 凭据管理器的提示完成 GitHub 认证：
+下载脚本及通过 HTTPS 克隆、更新公开代码无需 GitHub 账号或仓库授权。访问 Azure 资源仍需使用你自己的 Azure 账号执行 `az login`，并具备对应订阅和资源的访问权限。
+
+如果希望先下载并审阅脚本，也可以从 [setup.ps1](setup.ps1) 的文件页面下载（无需先克隆整个仓库），在下载目录执行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
@@ -108,7 +110,7 @@ git clone https://github.com/chunxli/AOAI-API-Swagger.git
 cd .\AOAI-API-Swagger
 ```
 
-仓库为 Private 时，克隆需要相应的 GitHub 访问权限；已有代码则直接进入包含 `server.py` 的项目目录。
+上述 HTTPS 地址支持匿名克隆，无需 GitHub 登录；已有代码则直接进入包含 `server.py` 的项目目录。
 
 #### 2. 安装依赖
 
