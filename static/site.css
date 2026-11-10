@@ -194,6 +194,12 @@ h3 { margin: 0; font-size: 16px; }
 .selection-details div { display: grid; grid-template-columns: 58px minmax(0, 1fr) 32px; align-items: center; gap: 8px; }
 .selection-details dt { color: var(--text-faint); font-size: 11px; }
 .selection-details dd { overflow: hidden; margin: 0; color: var(--text-soft); font: 11px/1.5 "Cascadia Code", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.login-guidance { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.login-guidance > summary { color: var(--brand); cursor: pointer; font-size: 12px; font-weight: 700; }
+.login-guidance p { margin: 9px 0; color: var(--text-soft); font-size: 11px; line-height: 1.65; }
+.login-guidance strong { display: block; margin-top: 12px; color: var(--text-soft); font-size: 12px; }
+.login-command { display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.login-command code { min-width: 0; color: var(--text); font: 11px/1.6 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .selection-summary-row { display: flex; align-items: center; gap: 8px; min-height: 40px; margin-top: 11px; padding: 5px 6px 5px 11px; border: 1px solid rgba(25,50,82,.06); border-radius: 10px; background: rgba(255,255,255,.72); }
 .selection-summary { overflow: hidden; margin: 10px 0 0; color: var(--text-faint); font: 11px/1.5 "Cascadia Code", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .selection-summary-row .selection-summary { flex: 1 1 auto; min-width: 0; margin: 0; }

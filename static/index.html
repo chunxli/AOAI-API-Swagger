@@ -99,6 +99,23 @@
               <button class="value-copy-button" id="copy-subscription-id" type="button" aria-label="复制订阅 ID" title="复制订阅 ID" disabled></button>
             </div>
           </dl>
+          <details class="login-guidance" id="login-guidance">
+            <summary>重新登录或切换账户（查看命令）</summary>
+            <p>订阅来自本机 Azure CLI 登录，并非预设账户。请在运行本站的同一 Windows 用户下打开 PowerShell，手动执行以下命令。</p>
+            <strong>重新登录当前租户</strong>
+            <div class="login-command">
+              <code id="azure-login-command">az login</code>
+              <button class="value-copy-button" id="copy-login-command" type="button" aria-label="复制重新登录命令" title="复制重新登录命令" disabled></button>
+            </div>
+            <strong>切换为其他登录账户</strong>
+            <p>先退出，再登录时选择其他账户。退出会影响同一 Windows 用户下其他依赖 Azure CLI 登录的工具；仅需续期时请使用上方命令。</p>
+            <div class="login-command">
+              <code id="azure-switch-account-command">az logout
+az login</code>
+              <button class="value-copy-button" id="copy-switch-account-command" type="button" aria-label="复制切换账户命令" title="复制切换账户命令" disabled></button>
+            </div>
+            <p>网页不会自动执行这些命令。完成登录后点击右上角“刷新账户”，再选择订阅、Endpoint 和部署。</p>
+          </details>
         </article>
 
         <article class="setup-step">

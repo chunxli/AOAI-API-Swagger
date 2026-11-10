@@ -50,6 +50,10 @@ async function initialize() {
   const copySubscriptionIdButton = document.getElementById("copy-subscription-id");
   const copyEndpointButton = document.getElementById("copy-endpoint");
   const copyModelButton = document.getElementById("copy-model");
+  const loginGuidance = document.getElementById("login-guidance");
+  const loginCommand = document.getElementById("azure-login-command");
+  const copyLoginCommandButton = document.getElementById("copy-login-command");
+  const copySwitchAccountCommandButton = document.getElementById("copy-switch-account-command");
   const resourcePortalLink = document.getElementById("open-resource");
   const deploymentPortalLink = document.getElementById("open-deployment");
   const discoveryProgress = [
@@ -135,11 +139,18 @@ async function initialize() {
     button.disabled = !value;
     button.classList.remove("copied");
   };
+  setCopyValue(copyLoginCommandButton, loginCommand.textContent);
+  setCopyValue(
+    copySwitchAccountCommandButton,
+    document.getElementById("azure-switch-account-command").textContent.trim(),
+  );
   for (const button of [
     copyTenantIdButton,
     copySubscriptionIdButton,
     copyEndpointButton,
     copyModelButton,
+    copyLoginCommandButton,
+    copySwitchAccountCommandButton,
   ]) {
     button.addEventListener("click", async () => {
       const value = button.dataset.copyValue;
@@ -244,6 +255,8 @@ async function initialize() {
     subscriptionId.textContent = account.subscription_id || "—";
     setCopyValue(copyTenantIdButton, account.tenant_id);
     setCopyValue(copySubscriptionIdButton, account.subscription_id);
+    loginCommand.textContent = window.AzureOpenAICommandCopy.buildAzureLoginCommand(account.tenant_id);
+    setCopyValue(copyLoginCommandButton, loginCommand.textContent);
   };
   const updateDeploymentDetails = () => {
     const deployment = selectedDeployment();
@@ -326,6 +339,7 @@ async function initialize() {
         headers: { "X-Lab-Session": status.session_token },
         signal,
       });
+      if (response.status === 401 && requestId === environmentRequestId) loginGuidance.open = true;
       const result = await readLocalJson(response);
       const currentAccount = selectedAccount();
       if (
@@ -432,9 +446,10 @@ async function initialize() {
       accountSelect.append(option);
       updateFavoriteButton();
       updateAccountDetails();
+      loginGuidance.open = true;
       setResourceStatus("error", error.message);
       authOutput.className = "error";
-      authOutput.textContent = "请先在终端运行 az login，然后刷新账户。";
+      authOutput.textContent = "请按账户卡片中的登录指引，在 PowerShell 执行命令后点击“刷新账户”。";
       setConnectionState("error", "账户读取失败");
     } finally {
       refreshAccountsButton.disabled = false;
@@ -532,8 +547,9 @@ async function initialize() {
       output.textContent = `${account.subscription_name}：${result.message} 有效期至 ${new Date(result.expires_at).toLocaleString()}。`;
       setConnectionState("success", "访问令牌已就绪");
     } catch (error) {
+      loginGuidance.open = true;
       output.className = "error";
-      output.textContent = error.message;
+      output.textContent = `${error.message} 请按账户卡片中的登录指引操作，完成后点击“刷新账户”。`;
       setConnectionState("error", "验证失败");
     } finally {
       authButton.disabled = false;

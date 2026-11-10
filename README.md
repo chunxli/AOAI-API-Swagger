@@ -152,7 +152,8 @@ az login
   az account list --output table --only-show-errors
   ```
 
-- 账户为空、登录失效或缺少读取权限时，页面会明确报错；根据提示执行 `az login`、指定租户登录或申请相应权限后刷新。全量 Swagger Schema 不代表所选模型、区域和账户权限支持全部接口。
+- 账户为空、登录失效或缺少读取权限时，页面会明确报错。“选择测试账户”卡片中的“重新登录或切换账户”提供可复制的具体命令：选中订阅时为该租户生成 `az login --tenant '<当前租户 ID>'`；没有账户时显示 `az login`。账户读取失败或认证失败时会自动展开指引。
+- 如需切换为其他登录账户，指引提供 `az logout` 后再执行 `az login`，并提示退出会影响同一 Windows 用户下其他依赖 Azure CLI 登录的工具。请在运行本站的同一 Windows 用户下手动执行，完成后点击“刷新账户”，重新选择订阅、Endpoint 和部署；网页不会替你执行登录或退出命令。全量 Swagger Schema 不代表所选模型、区域和账户权限支持全部接口。
 - Windows 下使用同步 `AzureCliCredential` 在线程中获取令牌，按系统编码处理 CLI 输出，避免异步 SDK 将本地编码的错误输出强行按 UTF-8 解码而导致 500；不会阻塞 WebApp 的异步事件循环。真实登录错误仍会明确返回，不会伪装成认证成功。
 - 页面遇到非 JSON 错误响应时会显示 HTTP 状态码和日志位置，而不是 `Unexpected token`。请查看安装目录下 `.runtime/server.stderr.log` 的 Traceback；分享日志前删除 Token 等敏感内容。
 

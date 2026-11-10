@@ -23,6 +23,9 @@
   const bashQuote = (value) => `'${String(value).replace(/'/g, `'"'"'`)}'`;
   const powerShellQuote = (value) => `'${String(value).replace(/'/g, "''")}'`;
   const pythonQuote = (value) => JSON.stringify(String(value));
+  const buildAzureLoginCommand = (tenantId) => (
+    tenantId ? `az login --tenant ${powerShellQuote(tenantId)}` : "az login"
+  );
 
   const normalizeHeaders = (headers) => {
     const normalized = [];
@@ -300,5 +303,5 @@
     };
   };
 
-  return { buildRequestCommands };
+  return { buildRequestCommands, buildAzureLoginCommand };
 }));

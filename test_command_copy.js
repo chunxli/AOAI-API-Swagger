@@ -2,7 +2,23 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildRequestCommands } = require("./static/command-copy.js");
+const { buildRequestCommands, buildAzureLoginCommand } = require("./static/command-copy.js");
+
+test("builds login commands for the selected tenant or an empty account list", () => {
+  assert.equal(buildAzureLoginCommand(), "az login");
+  assert.equal(buildAzureLoginCommand(""), "az login");
+  assert.equal(
+    buildAzureLoginCommand("11111111-1111-1111-1111-111111111111"),
+    "az login --tenant '11111111-1111-1111-1111-111111111111'",
+  );
+});
+
+test("quotes tenant text as a PowerShell literal rather than executable input", () => {
+  assert.equal(
+    buildAzureLoginCommand("tenant'$(Write-Host unexpected)"),
+    "az login --tenant 'tenant''$(Write-Host unexpected)'",
+  );
+});
 
 const baseInput = {
   endpoint: "https://example.openai.azure.com",
