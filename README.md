@@ -1,6 +1,8 @@
+![Azure OpenAI REST API Lab — 自动发现资源、Entra ID 认证与 Windows 一键安装](docs/images/banner.svg)
+
 # Azure OpenAI 本地 Swagger 测试站点
 
-基于 Azure 官方 OpenAPI 固定快照，覆盖截图中的 **14 类 API、完整请求/响应 Schema**。
+基于 Azure 官方 OpenAPI 固定快照，覆盖 **14 类 API、完整请求/响应 Schema**。
 浏览器访问本地 Swagger UI，由 Python 代理通过 Azure CLI 获取 Microsoft Entra ID 令牌并调用 Azure；无需 API Key。
 
 ## Quick Start
@@ -37,6 +39,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 5. **Start**：启动或重启本站后台服务，验证健康状态，再打开浏览器。页面自动发现账户、Endpoint 和模型部署；**无需创建配置文件**。
 
 完成后通常访问 **http://127.0.0.1:8765**（可选配置覆盖端口时以脚本输出为准），选择订阅、Endpoint 和部署后即可测试。Windows 登录后自启动默认关闭，可在页面中自行开启；脚本不会修改此选择。
+
+## 应用截图
+
+以下为实际 WebApp 的界面局部截图，使用隔离预览环境中的**虚构演示数据**：账户、租户、订阅、资源地址和部署均不是个人生产配置。截图未获取真实 Azure Token，也未调用模型。
+
+### 连接与安全控制
+
+自动发现账户、Endpoint 与模型部署，提供 Azure 资源和部署快捷入口、访问令牌操作、写操作保护及 Windows 登录后自启动开关。
+
+![连接与安全控制：演示订阅、Endpoint、模型部署、令牌操作及 Windows 自启动设置](docs/images/app-workspace.png)
+
+### API Explorer
+
+按测试集合浏览官方 API 定义，查看操作指南、请求历史策略及 Bash、PowerShell、Python 等价命令入口；所有真实请求都需手动执行。
+
+![API Explorer：推理入门集合、操作指南、等价命令入口及 Swagger API 分类](docs/images/app-api-explorer.png)
 
 ## Setup 详细说明
 
