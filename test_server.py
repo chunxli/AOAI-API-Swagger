@@ -9,6 +9,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from azure.core.credentials import AccessToken
 from azure.identity import CredentialUnavailableError
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 import httpx
 
 from server import (
+    DEFAULT_CONFIG,
     azure_endpoint_variants,
     create_app,
     create_azure_cli_credential,
@@ -25,6 +27,7 @@ from server import (
     TokenProvider,
 )
 from history_store import HistoryStore
+from startup_settings import StartupSettingsError
 from specification import API_DOCUMENTATION, load_official_spec, operations, TAG_DESCRIPTIONS
 
 ROOT = Path(__file__).resolve().parent
@@ -54,7 +57,12 @@ class ProxyTests(unittest.TestCase):
         self.history_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.history_directory.cleanup)
         self.history_path = Path(self.history_directory.name) / "history.sqlite3"
-        config = load_config()
+        config = {
+            **DEFAULT_CONFIG,
+            "endpoint": "https://offline-test.openai.azure.com",
+            "deployment": "offline-chat",
+            "embedding_deployment": "offline-embedding",
+        }
         config["port"] = 8765
         config["max_upload_mb"] = 1
 
@@ -144,6 +152,47 @@ class ProxyTests(unittest.TestCase):
             self.assertEqual(self.client.get(path).status_code, 200)
         self.assertEqual(self.credential.calls, 0)
         self.assertFalse(self.requests)
+
+    def test_discovery_and_inference_without_config_file(self):
+        missing_config = Path(self.history_directory.name) / "missing-config.json"
+        with patch("server.load_config", return_value=load_config(missing_config)):
+            app = create_app(
+                credential=self.credential,
+                transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True})),
+                account_loader=self.app.state.account_loader,
+                environment_loader=self.app.state.environment_loader,
+                history_path=Path(self.history_directory.name) / "automatic-history.sqlite3",
+            )
+        with TestClient(app, base_url=BASE_URL) as client:
+            status = client.get("/api/status").json()
+            self.assertEqual(status["endpoint"], "")
+            self.assertEqual(status["deployment"], "")
+            headers = {"X-Lab-Session": status["session_token"]}
+            spec = client.get("/api/openapi.json").json()
+            for path, model in (
+                ("/responses", "YOUR-CHAT-DEPLOYMENT"),
+                ("/embeddings", "YOUR-EMBEDDING-DEPLOYMENT"),
+            ):
+                example = spec["paths"][path]["post"]["requestBody"]["content"]["application/json"]["example"]
+                self.assertEqual(example["model"], model)
+            blocked = client.get("/proxy/openai/v1/models", headers=headers)
+            self.assertEqual(blocked.status_code, 400)
+            self.assertIn("Endpoint", blocked.json()["error"]["message"])
+            self.assertEqual(self.credential.calls, 0)
+            account = client.get("/api/azure-accounts", headers=headers).json()["accounts"][0]
+            result = client.get("/api/azure-environments", headers=headers, params={
+                "tenant_id": account["tenant_id"],
+                "subscription_id": account["subscription_id"],
+            })
+            self.assertEqual(result.status_code, 200)
+            environment = result.json()["environments"][0]
+            response = client.post("/proxy/openai/v1/responses", headers={
+                **headers,
+                "X-Lab-Environment": environment["environment_id"],
+                "X-Lab-Deployment": environment["deployments"][0]["name"],
+            }, json={"model": "placeholder", "input": "test"})
+            self.assertEqual(response.status_code, 200)
+        self.assertFalse(missing_config.exists())
 
     def test_schema_covers_all_official_operations_and_local_refs(self):
         spec = self.client.get("/api/openapi.json").json()
@@ -297,6 +346,68 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(result.json()["accounts"][0]["subscription_name"], "Offline Test")
         self.assertNotIn("token", result.text.lower())
 
+    def test_startup_settings_get_and_update(self):
+        headers = {"X-Lab-Session": self.session}
+        disabled = {"supported": True, "enabled": False, "mode": "current-user-logon"}
+        enabled = {**disabled, "enabled": True}
+        with patch.object(self.app.state.startup, "read", return_value=disabled) as read:
+            result = self.client.get("/api/settings/startup", headers=headers)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json(), disabled)
+            read.assert_called_once_with()
+        for value in (True, False):
+            expected = enabled if value else disabled
+            with patch.object(self.app.state.startup, "write", return_value=expected) as write:
+                result = self.client.put("/api/settings/startup", headers=headers, json={"enabled": value})
+                self.assertEqual(result.status_code, 200)
+                self.assertEqual(result.json(), expected)
+                write.assert_called_once_with(value)
+
+    def test_startup_settings_requires_local_session_and_origin(self):
+        with patch.object(self.app.state.startup, "write") as write:
+            for headers in (
+                {},
+                {"X-Lab-Session": "wrong"},
+                {"X-Lab-Session": self.session, "Origin": "https://example.com"},
+                {"X-Lab-Session": self.session, "Host": "example.com"},
+                {"X-Lab-Session": self.session, "Sec-Fetch-Site": "cross-site"},
+            ):
+                result = self.client.put("/api/settings/startup", headers=headers, json={"enabled": True})
+                self.assertEqual(result.status_code, 403)
+            write.assert_not_called()
+        self.assertEqual(self.client.get("/api/settings/startup").status_code, 403)
+
+    def test_startup_settings_rejects_invalid_payloads_without_writing(self):
+        headers = {"X-Lab-Session": self.session}
+        with patch.object(self.app.state.startup, "write") as write:
+            for payload in (None, [], {}, {"enabled": 1}, {"enabled": "true"}, {"enabled": True, "command": "x"}):
+                result = self.client.put("/api/settings/startup", headers={
+                    **headers, "Content-Type": "application/json",
+                }, content=json.dumps(payload))
+                self.assertEqual(result.status_code, 400)
+            result = self.client.put("/api/settings/startup", headers={
+                **headers, "Content-Type": "application/json",
+            }, content="{")
+            self.assertEqual(result.status_code, 400)
+            result = self.client.put("/api/settings/startup", headers={
+                **headers, "Content-Type": "application/json",
+            }, content="x" * 1025)
+            self.assertEqual(result.status_code, 413)
+            result = self.client.put("/api/settings/startup", headers=headers, content="enabled=true")
+            self.assertEqual(result.status_code, 415)
+            write.assert_not_called()
+
+    def test_startup_settings_reports_os_failures(self):
+        headers = {"X-Lab-Session": self.session}
+        with patch.object(self.app.state.startup, "read", side_effect=StartupSettingsError("read denied")):
+            result = self.client.get("/api/settings/startup", headers=headers)
+            self.assertEqual(result.status_code, 503)
+            self.assertEqual(result.json()["error"]["message"], "read denied")
+        with patch.object(self.app.state.startup, "write", side_effect=StartupSettingsError("write denied")):
+            result = self.client.put("/api/settings/startup", headers=headers, json={"enabled": True})
+            self.assertEqual(result.status_code, 503)
+            self.assertEqual(result.json()["error"]["message"], "write denied")
+
     def test_discovers_environment_and_routes_with_selected_deployment(self):
         result = self.client.get("/api/azure-environments", headers={
             "X-Lab-Session": self.session,
@@ -306,7 +417,11 @@ class ProxyTests(unittest.TestCase):
         })
         self.assertEqual(result.status_code, 200)
         environment = result.json()["environments"][0]
-        self.assertNotIn("resource_id", environment)
+        self.assertEqual(
+            environment["resource_id"],
+            "/subscriptions/22222222-2222-2222-2222-222222222222"
+            "/resourceGroups/test/providers/Microsoft.CognitiveServices/accounts/alternate",
+        )
         self.assertEqual(environment["endpoint_type"], "Azure OpenAI API")
         response = self.call(path="/responses", json={"model": "old", "input": "test"}, headers={
             "X-Lab-Environment": environment["environment_id"],
@@ -799,13 +914,61 @@ class EnvironmentDiscoveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "config.json"
+
+    def test_missing_config_uses_defaults_without_creating_file(self):
+        config = load_config(self.path)
+        self.assertEqual(config, DEFAULT_CONFIG)
+        self.assertFalse(self.path.exists())
+        config["port"] = 9000
+        self.assertEqual(load_config(self.path)["port"], 8765)
+
+    def test_partial_config_overrides_defaults(self):
+        self.path.write_text(json.dumps({"port": 9000}), encoding="utf-8")
+        self.assertEqual(load_config(self.path), {**DEFAULT_CONFIG, "port": 9000})
+
+    def test_explicit_connection_settings_are_preserved(self):
+        overrides = {
+            "endpoint": "https://example.openai.azure.com/",
+            "deployment": "my-chat",
+            "embedding_deployment": "my-embedding",
+            "tenant_id": "test-tenant",
+            "token_scope": "https://cognitiveservices.azure.com/.default",
+        }
+        self.path.write_text(json.dumps(overrides), encoding="utf-8")
+        self.assertEqual(load_config(self.path), {
+            **DEFAULT_CONFIG, **overrides, "endpoint": overrides["endpoint"].rstrip("/"),
+        })
+
+    def test_invalid_config_does_not_silently_use_defaults(self):
+        for value in ("{", "[]", "null", '{"port": "9000"}', '{"port": 1}',
+                      '{"deployment": null}', '{"deployment": " "}',
+                      '{"embedding_deployment": 1}', '{"tenant_id": 1}',
+                      '{"token_scope": "https://example.com"}'):
+            with self.subTest(value=value):
+                self.path.write_text(value, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    load_config(self.path)
+        with patch.object(Path, "read_text", side_effect=PermissionError("read denied")):
+            with self.assertRaises(PermissionError):
+                load_config(self.path)
+
+    def test_nonstring_endpoints_are_rejected(self):
+        for value in (None, 0, [], True):
+            self.path.write_text(json.dumps({"endpoint": value}), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_config(self.path)
+
     def test_invalid_endpoint_is_rejected(self):
         from unittest.mock import patch
         for endpoint in ["http://example.com", "https://example.com",
                          "https://a.openai.azure.com/openai/v1",
                          "https://a.openai.azure.com?redirect=bad",
                          "https://user:pass@a.openai.azure.com"]:
-            config = copy.deepcopy(load_config())
+            config = dict(DEFAULT_CONFIG)
             config["endpoint"] = endpoint
             with patch.object(Path, "read_text", return_value=json.dumps(config)):
                 with self.assertRaises(ValueError):

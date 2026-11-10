@@ -118,6 +118,12 @@
             <p class="selection-summary" id="endpoint-detail">选择订阅后自动发现资源。</p>
             <button class="value-copy-button" id="copy-endpoint" type="button" aria-label="复制 Endpoint URL" title="复制 Endpoint URL" disabled></button>
           </div>
+          <div class="discovery-progress" id="resource-progress" hidden>
+            <strong id="resource-progress-label">正在查询 Azure 资源与模型部署…</strong>
+            <div class="discovery-progress-track" role="progressbar" aria-labelledby="resource-progress-label"></div>
+            <span>正在访问 Azure Resource Manager，请稍候。</span>
+          </div>
+          <a class="compact-button resource-portal-link" id="open-resource" target="_blank" rel="noopener noreferrer" aria-disabled="true" tabindex="-1" title="在新标签页打开 Azure 资源">打开 Azure 资源 <span aria-hidden="true">↗</span></a>
         </article>
 
         <article class="setup-step">
@@ -136,6 +142,12 @@
             <p class="selection-summary" id="deployment-detail">选择 Endpoint 后显示可用部署。</p>
             <button class="value-copy-button" id="copy-model" type="button" aria-label="复制部署名称" title="复制部署名称" disabled></button>
           </div>
+          <div class="discovery-progress" id="deployment-progress" hidden>
+            <strong id="deployment-progress-label">正在等待 Azure 资源加载…</strong>
+            <div class="discovery-progress-track" role="progressbar" aria-labelledby="deployment-progress-label"></div>
+            <span>查询完成后将自动显示可用部署。</span>
+          </div>
+          <a class="compact-button resource-portal-link" id="open-deployment" target="_blank" rel="noopener noreferrer" aria-disabled="true" tabindex="-1" title="在新标签页打开 Microsoft Foundry 模型部署">打开模型部署 <span aria-hidden="true">↗</span></a>
         </article>
       </div>
 
@@ -175,6 +187,22 @@
             <span class="toggle-track" aria-hidden="true"><span></span></span>
             <span class="toggle-label">允许写操作</span>
           </label>
+        </div>
+      </div>
+
+      <div class="startup-card" id="startup-card">
+        <div class="control-copy">
+          <h3>登录后自动启动 <span class="safe-chip" id="startup-chip">读取中</span></h3>
+          <p id="startup-result" role="status">正在读取 Windows 自启动设置…</p>
+          <p>仅对当前 Windows 用户生效，无需管理员权限。重启并登录 Windows 后在后台启动，不自动打开浏览器；关闭此开关不会停止当前服务。</p>
+        </div>
+        <div class="startup-actions">
+          <label class="toggle">
+            <input id="startup-enabled" type="checkbox" aria-describedby="startup-result" disabled>
+            <span class="toggle-track" aria-hidden="true"><span></span></span>
+            <span class="toggle-label">登录后启动</span>
+          </label>
+          <button class="compact-button" id="refresh-startup" type="button" disabled>刷新状态</button>
         </div>
       </div>
 
@@ -274,6 +302,16 @@
       <div id="swagger-ui"></div>
     </section>
   </main>
+  <aside class="floating-token-actions" id="floating-token-actions" aria-label="访问令牌快捷操作" hidden>
+    <button class="secondary-button" id="floating-copy-token" type="button" disabled>
+      <span class="button-icon copy-icon" aria-hidden="true"></span>
+      <span id="floating-copy-token-label"></span>
+    </button>
+    <button class="secondary-button" id="floating-copy-bearer-token" type="button" disabled>
+      <span class="button-icon copy-icon" aria-hidden="true"></span>
+      <span id="floating-copy-bearer-token-label"></span>
+    </button>
+  </aside>
   <footer>
     <span>Azure OpenAI REST API Lab</span>
     <span>官方固定 Schema · 仅监听 127.0.0.1 · 无外部 CDN 或在线验证器</span>

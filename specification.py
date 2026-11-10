@@ -232,14 +232,14 @@ def build_ui_spec(official, config):
 
     examples = {
         "/responses": {
-            "model": config["deployment"],
+            "model": config["deployment"] or "YOUR-CHAT-DEPLOYMENT",
             "input": "请用一句话介绍 Azure OpenAI。",
             "max_output_tokens": 1024,
             "store": False,
             "stream": False,
         },
         "/chat/completions": {
-            "model": config["deployment"],
+            "model": config["deployment"] or "YOUR-CHAT-DEPLOYMENT",
             "messages": [{"role": "user", "content": "请用一句话介绍 Azure OpenAI。"}],
             "max_completion_tokens": 1024,
             "stream": False,
@@ -250,7 +250,7 @@ def build_ui_spec(official, config):
             "max_tokens": 64,
         },
         "/embeddings": {
-            "model": config["embedding_deployment"],
+            "model": config["embedding_deployment"] or "YOUR-EMBEDDING-DEPLOYMENT",
             "input": ["Azure OpenAI provides model APIs."],
         },
         "/conversations": {"metadata": {"purpose": "local-swagger-test"}},

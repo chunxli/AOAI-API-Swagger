@@ -1,6 +1,7 @@
 """Loopback-only Azure OpenAI Swagger UI with server-side Entra ID authentication."""
 
 import asyncio
+import argparse
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from email import policy
@@ -26,6 +27,7 @@ import httpx
 import uvicorn
 
 from history_store import HistoryStore, is_text_content
+from startup_settings import StartupManager, StartupSettingsError
 from specification import build_explorer, load_official_spec, needs_unlock, operations
 
 ROOT = Path(__file__).resolve().parent
@@ -36,6 +38,16 @@ ARM_API_VERSION = "2024-10-01"
 MODEL_OVERRIDE_PATHS = {"/responses", "/chat/completions", "/completions", "/embeddings"}
 HISTORY_DOCUMENT_ID = "azure-openai-v1"
 HISTORY_WRITE_BUFFER_BYTES = 256 * 1024
+DEFAULT_CONFIG = {
+    "endpoint": "",
+    "deployment": "",
+    "embedding_deployment": "",
+    "tenant_id": "",
+    "token_scope": "https://ai.azure.com/.default",
+    "port": 8765,
+    "request_timeout_seconds": 180,
+    "max_upload_mb": 32,
+}
 SENSITIVE_LOG_HEADERS = {
     "authorization",
     "api-key",
@@ -257,14 +269,25 @@ async def discover_azure_environments(subscription_id, access_token, client):
 
 
 def load_config(path=None):
-    config = json.loads(Path(path or ROOT / "config.json").read_text("utf-8"))
+    config_path = Path(path or ROOT / "config.json")
+    try:
+        overrides = json.loads(config_path.read_text("utf-8"))
+    except FileNotFoundError:
+        overrides = {}
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{config_path.name}: 必须是 UTF-8 编码的有效 JSON。") from exc
+    if not isinstance(overrides, dict):
+        raise ValueError(f"{config_path.name}: 配置必须是 JSON 对象。")
+    config = {**DEFAULT_CONFIG, **overrides}
     endpoint = config.get("endpoint", "")
-    normalized_endpoint = normalize_azure_endpoint(endpoint)
-    if normalized_endpoint is None or urlsplit(normalized_endpoint).path not in ("", "/"):
+    normalized_endpoint = normalize_azure_endpoint(endpoint) if endpoint else ""
+    if not isinstance(endpoint, str) or (
+        endpoint and (normalized_endpoint is None or urlsplit(normalized_endpoint).path not in ("", "/"))
+    ):
         raise ValueError("config.json: endpoint must be an Azure public-cloud HTTPS resource root.")
     for name in ("deployment", "embedding_deployment"):
-        if not isinstance(config.get(name), str) or not config[name].strip():
-            raise ValueError(f"config.json: {name} must be a non-empty string.")
+        if not isinstance(config.get(name), str) or (config[name] and not config[name].strip()):
+            raise ValueError(f"config.json: {name} must be a string; use an empty string for automatic discovery.")
     for name, lower, upper in (
         ("port", 1024, 65535),
         ("request_timeout_seconds", 1, 1800),
@@ -277,7 +300,9 @@ def load_config(path=None):
         "https://cognitiveservices.azure.com/.default",
     }:
         raise ValueError("config.json: unsupported Azure OpenAI token scope.")
-    if config.get("tenant_id") and not re.fullmatch(r"[A-Za-z0-9.-]+", config["tenant_id"]):
+    if not isinstance(config["tenant_id"], str) or (
+        config["tenant_id"] and not re.fullmatch(r"[A-Za-z0-9.-]+", config["tenant_id"])
+    ):
         raise ValueError("config.json: invalid tenant_id.")
     config["endpoint"] = normalized_endpoint
     return config
@@ -423,6 +448,8 @@ def create_app(
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.config = config
+    app.state.startup = StartupManager(ROOT)
+    startup_lock = asyncio.Lock()
 
     @app.middleware("http")
     async def local_only(request, call_next):
@@ -438,6 +465,7 @@ def create_app(
             "/api/auth",
             "/api/azure-accounts",
             "/api/azure-environments",
+            "/api/settings/startup",
         } or path.startswith("/api/history"):
             supplied = request.headers.get("x-lab-session", "")
             if not secrets.compare_digest(supplied, session_token):
@@ -477,6 +505,35 @@ def create_app(
         if spec is None:
             return error(404, "未找到该 API 文档或测试集合；当前仅支持已适配的 Azure OpenAI v1。")
         return spec
+
+    @app.get("/api/settings/startup")
+    async def startup_settings():
+        try:
+            async with startup_lock:
+                return await asyncio.to_thread(app.state.startup.read)
+        except StartupSettingsError as exc:
+            LOGGER.warning("Unable to read startup settings: %s", exc)
+            return error(503, str(exc))
+
+    @app.put("/api/settings/startup")
+    async def update_startup_settings(request: Request):
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            return error(415, "自启动设置只接受 application/json。")
+        body = await request.body()
+        if len(body) > 1024:
+            return error(413, "自启动设置请求过大。")
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            return error(400, "自启动设置必须是有效的 JSON。")
+        if not isinstance(payload, dict) or set(payload) != {"enabled"} or type(payload["enabled"]) is not bool:
+            return error(400, "请仅提供布尔类型的 enabled 设置。")
+        try:
+            async with startup_lock:
+                return await asyncio.to_thread(app.state.startup.write, payload["enabled"])
+        except StartupSettingsError as exc:
+            LOGGER.warning("Unable to update startup settings: %s", exc)
+            return error(503, str(exc))
 
     @app.get("/api/explorer")
     async def explorer():
@@ -534,6 +591,7 @@ def create_app(
             app.state.environments[environment_id] = stored
             result.append({
                 "environment_id": environment_id,
+                "resource_id": stored["resource_id"],
                 "resource_name": stored["resource_name"],
                 "endpoint": stored["endpoint"],
                 "endpoint_type": stored.get("endpoint_type", "默认"),
@@ -887,6 +945,8 @@ def create_app(
         if environment_id and environment is None:
             return await recorded_error(400, "所选 Azure 环境已失效，请刷新资源列表。")
         target_endpoint = environment["endpoint"] if environment else config["endpoint"]
+        if not target_endpoint:
+            return await recorded_error(400, "请先在页面选择 Azure 订阅与 Endpoint，等待资源发现完成后再执行请求。")
         if deployment_name:
             if environment is None:
                 return await recorded_error(400, "选择模型部署时必须同时选择 Azure Endpoint。")
@@ -917,7 +977,7 @@ def create_app(
             LOGGER.warning("Azure CLI authentication failed for %s %s", request.method, api_path)
             return await recorded_error(
                 401,
-                "Entra ID 认证失败。请运行 az login，并检查 config.json 中的 tenant_id。",
+                "Entra ID 认证失败。请运行 az login，并确认页面所选租户和订阅；使用可选配置时请检查 tenant_id。",
                 request_id,
             )
 
@@ -1047,7 +1107,13 @@ def create_app(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--print-port", action="store_true", help="Print the validated listening port without starting.")
+    args = parser.parse_args()
     settings = load_config()
+    if args.print_port:
+        print(settings["port"])
+        sys.exit(0)
     logging.basicConfig(level=logging.INFO)
     print(f"Swagger UI: http://127.0.0.1:{settings['port']}")
     print("No Azure request is sent until you explicitly test authentication or execute an operation.")

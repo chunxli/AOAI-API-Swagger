@@ -8,7 +8,6 @@ param(
 $ErrorActionPreference = "Stop"
 $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 $server = Join-Path $PSScriptRoot "server.py"
-$config = Join-Path $PSScriptRoot "config.json"
 $runtime = Join-Path $PSScriptRoot ".runtime"
 $pidFile = Join-Path $runtime "server.pid"
 $stdoutLog = Join-Path $runtime "server.stdout.log"
@@ -19,13 +18,16 @@ function Assert-Prerequisites {
         throw "Missing virtual environment. Run: python -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt"
     }
     if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot "node_modules\swagger-ui-dist\swagger-ui-bundle.js"))) {
-        throw "Missing Swagger UI assets. Run npm ci in swagger_site."
+        throw "Missing Swagger UI assets. Run npm install --ignore-scripts --no-audit --no-fund in swagger_site."
     }
 }
 
 function Get-ConfiguredPort {
-    $settings = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
-    return [int]$settings.port
+    $port = & $python $server --print-port
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to load application settings. Check the error above and optional config.json."
+    }
+    return [int]$port
 }
 
 function Get-ManagedProcess {

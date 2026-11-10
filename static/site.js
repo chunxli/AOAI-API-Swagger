@@ -26,6 +26,14 @@ async function initialize() {
   const copyTokenLabel = document.getElementById("copy-token-label");
   const copyBearerTokenButton = document.getElementById("copy-bearer-token");
   const copyBearerTokenLabel = document.getElementById("copy-bearer-token-label");
+  const copyTokenActions = copyTokenButton.closest(".copy-token-actions");
+  const floatingTokenActions = document.getElementById("floating-token-actions");
+  const floatingCopyTokenButton = document.getElementById("floating-copy-token");
+  const floatingCopyTokenLabel = document.getElementById("floating-copy-token-label");
+  const floatingCopyBearerTokenButton = document.getElementById("floating-copy-bearer-token");
+  const floatingCopyBearerTokenLabel = document.getElementById(
+    "floating-copy-bearer-token-label",
+  );
   const accountSelect = document.getElementById("azure-account");
   const favoriteAccountButton = document.getElementById("favorite-account");
   const favoriteAccountUpButton = document.getElementById("favorite-account-up");
@@ -42,6 +50,32 @@ async function initialize() {
   const copySubscriptionIdButton = document.getElementById("copy-subscription-id");
   const copyEndpointButton = document.getElementById("copy-endpoint");
   const copyModelButton = document.getElementById("copy-model");
+  const resourcePortalLink = document.getElementById("open-resource");
+  const deploymentPortalLink = document.getElementById("open-deployment");
+  const discoveryProgress = [
+    document.getElementById("resource-progress"),
+    document.getElementById("deployment-progress"),
+  ];
+  const setDiscoveryLoading = (loading) => {
+    for (const progress of discoveryProgress) {
+      progress.hidden = !loading;
+      progress.closest(".setup-step").setAttribute("aria-busy", String(loading));
+    }
+  };
+  const setPortalLink = (link, url) => {
+    link.setAttribute("aria-disabled", String(!url));
+    if (url) {
+      link.href = url;
+      link.removeAttribute("tabindex");
+    } else {
+      link.removeAttribute("href");
+      link.setAttribute("tabindex", "-1");
+    }
+  };
+  const clearPortalLinks = () => {
+    setPortalLink(resourcePortalLink, null);
+    setPortalLink(deploymentPortalLink, null);
+  };
   let accessToken = null;
   let accounts = [];
   let environments = [];
@@ -126,6 +160,7 @@ async function initialize() {
   }
   const clearToken = () => {
     accessToken = null;
+    floatingTokenActions.hidden = true;
     copyTokenButton.disabled = true;
     copyTokenLabel.textContent = "复制 Token";
     copyBearerTokenButton.disabled = true;
@@ -212,6 +247,18 @@ async function initialize() {
   };
   const updateDeploymentDetails = () => {
     const deployment = selectedDeployment();
+    const environment = selectedEnvironment();
+    const tenantId = selectedAccount().tenant_id;
+    const deploymentQuery = new URLSearchParams({
+      wsid: environment?.resource_id || "",
+      tid: tenantId,
+    });
+    setPortalLink(
+      deploymentPortalLink,
+      environment?.resource_id && deployment?.name && tenantId
+        ? `https://ai.azure.com/resource/deployments/${encodeURIComponent(deployment.name)}?${deploymentQuery}`
+        : null,
+    );
     if (!deployment) {
       deploymentDetail.textContent = "当前 Endpoint 没有可用的 OpenAI 部署。";
       setCopyValue(copyModelButton, null);
@@ -223,6 +270,13 @@ async function initialize() {
   };
   const populateDeployments = () => {
     const environment = selectedEnvironment();
+    const tenantId = selectedAccount().tenant_id;
+    setPortalLink(
+      resourcePortalLink,
+      environment?.resource_id && tenantId
+        ? `https://portal.azure.com/#@${encodeURIComponent(tenantId)}/resource${environment.resource_id.split("/").map(encodeURIComponent).join("/")}/overview`
+        : null,
+    );
     endpointDetail.textContent = environment?.endpoint || "未选择 Azure Endpoint。";
     endpointDetail.title = endpointDetail.textContent;
     setCopyValue(copyEndpointButton, environment?.endpoint);
@@ -252,6 +306,10 @@ async function initialize() {
     environmentAbortController = new AbortController();
     const { signal } = environmentAbortController;
     refreshEnvironmentsButton.disabled = true;
+    clearPortalLinks();
+    setDiscoveryLoading(true);
+    setCopyValue(copyEndpointButton, null);
+    setCopyValue(copyModelButton, null);
     endpointSelect.disabled = true;
     deploymentSelect.disabled = true;
     endpointSelect.replaceChildren();
@@ -335,6 +393,7 @@ async function initialize() {
       if (requestId === environmentRequestId) {
         environmentAbortController = null;
         refreshEnvironmentsButton.disabled = false;
+        setDiscoveryLoading(false);
       }
     }
   };
@@ -342,6 +401,7 @@ async function initialize() {
     const authOutput = document.getElementById("auth-result");
     const previousSubscriptionId = accounts.length ? selectedAccount().subscription_id : null;
     refreshAccountsButton.disabled = true;
+    clearPortalLinks();
     accountSelect.disabled = true;
     favoriteAccountButton.disabled = true;
     authButton.disabled = true;
@@ -470,6 +530,7 @@ async function initialize() {
       accessToken = result.access_token;
       copyTokenButton.disabled = false;
       copyBearerTokenButton.disabled = false;
+      updateFloatingTokenActions();
       output.className = "success";
       output.textContent = `${account.subscription_name}：${result.message} 有效期至 ${new Date(result.expires_at).toLocaleString()}。`;
       setConnectionState("success", "访问令牌已就绪");
@@ -490,6 +551,7 @@ async function initialize() {
       return;
     }
     button.disabled = true;
+    syncFloatingTokenButtons();
     try {
       await copyTextToClipboard(value);
       label.textContent = "已复制";
@@ -499,7 +561,32 @@ async function initialize() {
       output.textContent = `无法写入剪贴板：${error.message}`;
     } finally {
       button.disabled = false;
+      syncFloatingTokenButtons();
     }
+  };
+  const syncFloatingTokenButtons = () => {
+    floatingCopyTokenButton.disabled = copyTokenButton.disabled;
+    floatingCopyBearerTokenButton.disabled = copyBearerTokenButton.disabled;
+    floatingCopyTokenLabel.textContent = copyTokenLabel.textContent;
+    floatingCopyBearerTokenLabel.textContent = copyBearerTokenLabel.textContent;
+  };
+  let floatingTokenUpdatePending = false;
+  const updateFloatingTokenActions = () => {
+    floatingTokenUpdatePending = false;
+    if (!accessToken) {
+      floatingTokenActions.hidden = true;
+      return;
+    }
+    const headerHeight = document.querySelector(".app-header")?.getBoundingClientRect().height || 0;
+    floatingTokenActions.hidden = (
+      copyTokenActions.getBoundingClientRect().bottom > headerHeight + 8
+    );
+    syncFloatingTokenButtons();
+  };
+  const scheduleFloatingTokenUpdate = () => {
+    if (floatingTokenUpdatePending) return;
+    floatingTokenUpdatePending = true;
+    window.requestAnimationFrame(updateFloatingTokenActions);
   };
   copyTokenButton.addEventListener("click", () => (
     copyAccessToken(copyTokenButton, copyTokenLabel, accessToken, "复制 Token")
@@ -512,6 +599,11 @@ async function initialize() {
       "复制 Bearer Token",
     )
   ));
+  floatingCopyTokenButton.addEventListener("click", () => copyTokenButton.click());
+  floatingCopyBearerTokenButton.addEventListener("click", () => copyBearerTokenButton.click());
+  window.addEventListener("scroll", scheduleFloatingTokenUpdate, { passive: true });
+  window.addEventListener("resize", scheduleFloatingTokenUpdate);
+  syncFloatingTokenButtons();
 
   const mutationToggle = document.getElementById("allow-mutations");
   const safetyCard = document.getElementById("safety-card");
@@ -697,7 +789,7 @@ async function initialize() {
     },
   };
 
-  const historyFetch = window.AzureOpenAISessionFetch.createSessionFetch({
+  const sessionFetch = window.AzureOpenAISessionFetch.createSessionFetch({
     fetchImpl: window.fetch.bind(window),
     getToken: () => status.session_token,
     setToken: (token) => {
@@ -705,12 +797,82 @@ async function initialize() {
       setHeaderStatus("ready", "本地代理已重新连接");
     },
   });
-  const fetchHistoryJson = async (url, options = {}) => {
-    const response = await historyFetch(url, options);
+  const fetchLocalJson = async (url, options = {}) => {
+    const response = await sessionFetch(url, options);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error?.message || `HTTP ${response.status}`);
     return result;
   };
+  const startupToggle = document.getElementById("startup-enabled");
+  const startupRefresh = document.getElementById("refresh-startup");
+  const startupResult = document.getElementById("startup-result");
+  const startupChip = document.getElementById("startup-chip");
+  const startupCard = document.getElementById("startup-card");
+  let confirmedStartupEnabled = false;
+  const showStartupSettings = (settings) => {
+    if (
+      typeof settings.supported !== "boolean"
+      || typeof settings.enabled !== "boolean"
+      || settings.mode !== "current-user-logon"
+    ) {
+      throw new Error("服务端返回的自启动设置格式无效。");
+    }
+    confirmedStartupEnabled = settings.enabled;
+    startupToggle.checked = settings.enabled;
+    startupToggle.disabled = !settings.supported;
+    startupChip.textContent = !settings.supported ? "不支持" : settings.enabled ? "已开启" : "已关闭";
+    startupResult.className = "";
+    startupResult.textContent = !settings.supported
+      ? "当前系统不支持此功能，仅支持 Windows 用户登录后自动启动。"
+      : settings.enabled
+        ? "已开启：下次登录 Windows 后将自动在后台启动本应用。"
+        : "已关闭：下次登录 Windows 时不会自动启动本应用。";
+  };
+  const loadStartupSettings = async () => {
+    startupToggle.disabled = true;
+    startupRefresh.disabled = true;
+    startupCard.setAttribute("aria-busy", "true");
+    startupChip.textContent = "读取中";
+    startupResult.className = "";
+    startupResult.textContent = "正在读取 Windows 自启动设置…";
+    try {
+      showStartupSettings(await fetchLocalJson("/api/settings/startup"));
+    } catch (error) {
+      startupChip.textContent = "状态未知";
+      startupResult.className = "error";
+      startupResult.textContent = `无法读取自启动设置：${error.message} 请点击“刷新状态”重试。`;
+    } finally {
+      startupRefresh.disabled = false;
+      startupCard.setAttribute("aria-busy", "false");
+    }
+  };
+  startupRefresh.addEventListener("click", loadStartupSettings);
+  startupToggle.addEventListener("change", async () => {
+    const enabled = startupToggle.checked;
+    startupToggle.disabled = true;
+    startupRefresh.disabled = true;
+    startupCard.setAttribute("aria-busy", "true");
+    startupChip.textContent = "保存中";
+    startupResult.className = "";
+    startupResult.textContent = "正在保存 Windows 自启动设置…";
+    try {
+      const settings = await fetchLocalJson("/api/settings/startup", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (settings.enabled !== enabled) throw new Error("保存后的状态与选择不一致。");
+      showStartupSettings(settings);
+    } catch (error) {
+      startupToggle.checked = confirmedStartupEnabled;
+      startupChip.textContent = "待确认";
+      startupResult.className = "error";
+      startupResult.textContent = `自启动设置保存结果未确认：${error.message} 请刷新状态后重试。`;
+    } finally {
+      startupRefresh.disabled = false;
+      startupCard.setAttribute("aria-busy", "false");
+    }
+  });
   const updateRetentionValue = () => {
     const mode = historyRetentionMode.value;
     const visible = mode !== "forever";
@@ -726,7 +888,7 @@ async function initialize() {
   };
   const loadHistorySettings = async () => {
     try {
-      const settings = await fetchHistoryJson("/api/history/settings");
+      const settings = await fetchLocalJson("/api/history/settings");
       historyRetentionMode.value = settings.retention_mode;
       if (settings.retention_value !== null) {
         historyRetentionValue.value = String(settings.retention_value);
@@ -748,7 +910,7 @@ async function initialize() {
     historySettingsStatus.textContent = "正在保存并清理历史…";
     try {
       const mode = historyRetentionMode.value;
-      const settings = await fetchHistoryJson("/api/history/settings", {
+      const settings = await fetchLocalJson("/api/history/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -802,7 +964,7 @@ async function initialize() {
     message.className = "api-history-message";
     message.textContent = "正在恢复请求…";
     try {
-      const snapshot = await fetchHistoryJson(`/api/history/${historyId}/restore`);
+      const snapshot = await fetchLocalJson(`/api/history/${historyId}/restore`);
       const tryButton = block.querySelector(".try-out__btn");
       if (tryButton && /try it out/i.test(tryButton.textContent)) {
         tryButton.click();
@@ -850,7 +1012,7 @@ async function initialize() {
     message.className = "api-history-message";
     message.textContent = "正在准备下载…";
     try {
-      const response = await historyFetch(
+      const response = await sessionFetch(
         `/api/history/${historyId}/${direction}?download=true`,
       );
       if (!response.ok) {
@@ -924,7 +1086,7 @@ async function initialize() {
   const showHistoryDetail = async (record, container, message) => {
     container.replaceChildren();
     try {
-      const detail = await fetchHistoryJson(`/api/history/${record.id}`);
+      const detail = await fetchLocalJson(`/api/history/${record.id}`);
       const detailHead = document.createElement("div");
       detailHead.className = "api-history-detail-head";
       const detailTitle = document.createElement("strong");
@@ -983,7 +1145,7 @@ async function initialize() {
         }), "application/json");
         forwardedContent.append(forwardedMetadata);
         if (/^(application\/(.+\+)?json|application\/x-ndjson|text\/)/i.test(detail.forwarded_content_type)) {
-          const forwardedResponse = await historyFetch(
+          const forwardedResponse = await sessionFetch(
             `/api/history/${record.id}/forwarded-request`,
           );
           if (!forwardedResponse.ok) throw new Error(`HTTP ${forwardedResponse.status}`);
@@ -1031,7 +1193,7 @@ async function initialize() {
         responseHeaders,
       );
       if (/^(application\/(.+\+)?json|application\/x-ndjson|text\/)/i.test(detail.response_content_type)) {
-        const response = await historyFetch(`/api/history/${record.id}/response`);
+        const response = await sessionFetch(`/api/history/${record.id}/response`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const text = await response.text();
         const bodyHead = document.createElement("div");
@@ -1112,7 +1274,7 @@ async function initialize() {
         limit: "10",
         offset: String(offset),
       });
-      const result = await fetchHistoryJson(`/api/history?${query}`);
+      const result = await fetchLocalJson(`/api/history?${query}`);
       content.replaceChildren();
       const toolbar = document.createElement("div");
       toolbar.className = "api-history-toolbar";
@@ -1126,7 +1288,7 @@ async function initialize() {
         makeHistoryButton("清空当前 API", async () => {
           if (!window.confirm(`确定删除 ${identity.method} ${identity.path} 的全部历史吗？`)) return;
           try {
-            await fetchHistoryJson(`/api/history?${query}`, { method: "DELETE" });
+            await fetchLocalJson(`/api/history?${query}`, { method: "DELETE" });
             await loadOperationHistory(block, panel, 0);
           } catch (error) {
             count.className = "error";
@@ -1257,7 +1419,7 @@ async function initialize() {
           makeHistoryButton("删除", async () => {
             if (!window.confirm("确定删除这条请求历史吗？")) return;
             try {
-              await fetchHistoryJson(`/api/history/${record.id}`, { method: "DELETE" });
+              await fetchLocalJson(`/api/history/${record.id}`, { method: "DELETE" });
               await loadOperationHistory(block, panel, offset);
             } catch (error) {
               message.className = "api-history-message error";
@@ -1482,7 +1644,7 @@ async function initialize() {
     void switchCollection(documentInfo, collection);
   });
   explorerRetry.addEventListener("click", loadExplorer);
-  await Promise.all([loadAccounts(), loadExplorer()]);
+  await Promise.all([loadAccounts(), loadExplorer(), loadStartupSettings()]);
 }
 
 initialize().catch((error) => {
