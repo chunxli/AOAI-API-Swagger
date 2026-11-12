@@ -252,6 +252,9 @@ h3 { margin: 0; font-size: 16px; }
 .control-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; }
 .auth-card, .safety-card, .startup-card { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 22px; border: 1px solid rgba(25,50,82,.08); border-radius: 19px; background: var(--surface-subtle); box-shadow: 0 8px 24px rgba(27,52,84,.035); }
 .startup-card { margin-top: 16px; }
+.startup-card .control-copy { flex: 1 1 auto; }
+.startup-manual { max-width: 640px; margin-top: 12px; }
+.startup-manual[hidden] { display: none; }
 .startup-actions { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 16px; }
 .startup-card .toggle input:checked + .toggle-track { background: var(--brand); }
 .startup-card .toggle input:disabled + .toggle-track { opacity: .45; cursor: not-allowed; }

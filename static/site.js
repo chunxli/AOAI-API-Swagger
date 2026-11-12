@@ -54,6 +54,7 @@ async function initialize() {
   const loginCommand = document.getElementById("azure-login-command");
   const copyLoginCommandButton = document.getElementById("copy-login-command");
   const copySwitchAccountCommandButton = document.getElementById("copy-switch-account-command");
+  const copyManualStartCommandButton = document.getElementById("copy-manual-start-command");
   const resourcePortalLink = document.getElementById("open-resource");
   const deploymentPortalLink = document.getElementById("open-deployment");
   const discoveryProgress = [
@@ -151,6 +152,7 @@ async function initialize() {
     copyModelButton,
     copyLoginCommandButton,
     copySwitchAccountCommandButton,
+    copyManualStartCommandButton,
   ]) {
     button.addEventListener("click", async () => {
       const value = button.dataset.copyValue;
@@ -823,12 +825,17 @@ async function initialize() {
   const startupResult = document.getElementById("startup-result");
   const startupChip = document.getElementById("startup-chip");
   const startupCard = document.getElementById("startup-card");
+  const startupManual = document.getElementById("startup-manual");
+  const manualStartCommand = document.getElementById("manual-start-command");
   let confirmedStartupEnabled = false;
   const showStartupSettings = (settings) => {
     if (
       typeof settings.supported !== "boolean"
       || typeof settings.enabled !== "boolean"
       || settings.mode !== "current-user-logon"
+      || (settings.supported && (
+        typeof settings.manual_start_command !== "string" || !settings.manual_start_command.trim()
+      ))
     ) {
       throw new Error("服务端返回的自启动设置格式无效。");
     }
@@ -836,18 +843,23 @@ async function initialize() {
     startupToggle.checked = settings.enabled;
     startupToggle.disabled = !settings.supported;
     startupChip.textContent = !settings.supported ? "不支持" : settings.enabled ? "已开启" : "已关闭";
+    startupManual.hidden = !settings.supported || settings.enabled;
+    manualStartCommand.textContent = settings.manual_start_command || "";
+    setCopyValue(copyManualStartCommandButton, startupManual.hidden ? null : settings.manual_start_command);
     startupResult.className = "";
     startupResult.textContent = !settings.supported
       ? "当前系统不支持此功能，仅支持 Windows 用户登录后自动启动。"
       : settings.enabled
         ? "已开启：下次登录 Windows 后将自动在后台启动本应用。"
-        : "已关闭：下次登录 Windows 时不会自动启动本应用。";
+        : "已关闭：下次登录 Windows 时不会自动启动本应用。需要时使用下方命令手动启动。";
   };
   const loadStartupSettings = async () => {
     startupToggle.disabled = true;
     startupRefresh.disabled = true;
     startupCard.setAttribute("aria-busy", "true");
     startupChip.textContent = "读取中";
+    startupManual.hidden = true;
+    setCopyValue(copyManualStartCommandButton, null);
     startupResult.className = "";
     startupResult.textContent = "正在读取 Windows 自启动设置…";
     try {

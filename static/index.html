@@ -213,10 +213,18 @@ az login</code>
           <h3>登录后自动启动 <span class="safe-chip" id="startup-chip">读取中</span></h3>
           <p id="startup-result" role="status">正在读取 Windows 自启动设置…</p>
           <p>仅对当前 Windows 用户生效，无需管理员权限。重启并登录 Windows 后在后台启动，不自动打开浏览器；关闭此开关不会停止当前服务。</p>
+          <p>首次安装或升级到此版本后，正常后台启动时会默认开启一次；之后保留你的开关选择。</p>
+          <div class="startup-manual" id="startup-manual" hidden>
+            <p>未开启登录后启动时，以后需要使用 App，请在 PowerShell 执行以下命令，再打开本站地址；不需要重新安装：</p>
+            <div class="login-command">
+              <code id="manual-start-command">正在读取启动命令…</code>
+              <button class="value-copy-button" id="copy-manual-start-command" type="button" aria-label="复制手动启动命令" title="复制手动启动命令" disabled></button>
+            </div>
+          </div>
         </div>
         <div class="startup-actions">
           <label class="toggle">
-            <input id="startup-enabled" type="checkbox" aria-describedby="startup-result" disabled>
+            <input id="startup-enabled" type="checkbox" aria-describedby="startup-result startup-manual" disabled>
             <span class="toggle-track" aria-hidden="true"><span></span></span>
             <span class="toggle-label">登录后启动</span>
           </label>

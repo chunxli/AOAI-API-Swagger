@@ -46,9 +46,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 2. **Clone / Update**：首次默认克隆到 `%LOCALAPPDATA%\AzureOpenAILab`；已有本项目仓库时，确认位于 `main` 且工作区干净，再执行 `git pull --ff-only --no-rebase origin main` 更新代码。在已有项目目录运行脚本时使用该目录。
 3. **Install**：创建项目 `.venv`、安装固定的 Python 依赖和本地 Swagger UI 静态资源。
 4. **Azure 登录**：已有有效登录则复用，否则执行 `az login`。验证 ARM 令牌时不输出 Token，不修改 CLI 默认订阅，也不会创建 Azure 资源或调用模型。
-5. **Start**：启动或重启本站后台服务，验证健康状态，再打开浏览器。页面自动发现账户、Endpoint 和模型部署；**无需创建配置文件**。
+5. **Start**：启动或重启本站后台服务，验证健康状态并初始化一次性的 Windows 登录自启动默认值，再打开浏览器。页面自动发现账户、Endpoint 和模型部署；**无需创建配置文件**。
 
-完成后通常访问 **http://127.0.0.1:8765**（可选配置覆盖端口时以脚本输出为准），选择订阅、Endpoint 和部署后即可测试。Windows 登录后自启动默认关闭，可在页面中自行开启；脚本不会修改此选择。
+完成后通常访问 **http://127.0.0.1:8765**（可选配置覆盖端口时以脚本输出为准），选择订阅、Endpoint 和部署后即可测试。**Windows 登录后自启动默认开启**：首次安装或现有安装升级到此版本后，正常后台启动时会自动开启一次；之后可在页面关闭，后续重跑安装/更新或手动启动会保留该选择。关闭后的手动启动方式见[登录 Windows 后自动启动](#登录-windows-后自动启动)。
 
 ## Quick Uninstall
 
@@ -199,7 +199,7 @@ az login
 
 即使尚未安装 Azure CLI 或尚未登录，WebApp 本身也可以启动；页面会显示安装或登录提示。自动发现需要 `az` 在服务进程的 PATH 中可用、已执行 `az login`，并具备资源读取权限。发现资源不会自动创建部署或发送模型推理请求；未选择 Endpoint 时 Execute 会明确报错，不会使用虚构地址。
 
-首次 setup 到此完成。以后通常只需运行 `.\start.ps1`；Azure 登录过期时重新运行 `az login`。如需登录 Windows 后自动后台启动，在页面“登录后自动启动”卡片中开启开关，默认关闭。
+首次 setup 到此完成。登录 Windows 后默认会自动后台启动；若已关闭该选择，可手动运行 `.\start.ps1`。Azure 登录过期时重新运行 `az login`。页面“登录后自动启动”卡片可随时更改开关，并在关闭时提供当前安装路径的可复制启动命令。
 
 **注意：Execute 会访问真实 Azure API，推理、存储和作业可能计费。**
 
@@ -263,14 +263,25 @@ Get-Content -LiteralPath .\.runtime\server.stdout.log -Tail 80
 
 ## 登录 Windows 后自动启动
 
-在页面“连接与安全控制”下的“登录后自动启动”卡片中开启“登录后启动”，即可在机器重启并登录当前 Windows 用户后自动后台启动。默认不注册自启动，也不自动打开浏览器。无需管理员权限或保存 Windows 密码；未登录 Windows 时不会启动。
+**默认开启一次**：首次安装以及现有安装升级到此版本后，正常后台启动并确认健康时会注册当前 Windows 用户的登录自启动。此后用户在页面更改的开关会被保留，不会因更新、重跑安装或再次启动而强制打开。不自动打开浏览器，无需管理员权限或保存 Windows 密码；未登录 Windows 时不会启动。
 
 - 设置直接读取和更新当前用户的 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`，不是浏览器本地存储。注册表值名为 `AzureOpenAILab-<应用路径哈希>`，不同应用目录相互独立。
+- 一次性初始化记录保存在安装目录的 `.runtime/startup-default.json`；显式开启或关闭也会保存该记录。请保留它，以免清理后下次启动重新应用默认开启。默认卸载保留记录并关闭自启动；彻底删除安装后重装则重新使用默认开启。
 - 登录时通过 Windows PowerShell 隐藏运行本站 `start.ps1`，复用现有进程检查、端口检查及日志机制。当前服务已启动时不会重复启动。
 - 关闭开关只移除本站对应的自启动项，不会停止当前服务，也不会修改其他启动项。可点击“刷新状态”读取实际 Windows 设置；权限、组策略或保存错误会明确显示。
 - 启用后请保留应用目录和 `.venv`。移动或删除应用前先关闭开关，到新目录启动后再重新开启。Windows 自启动命令有 260 字符限制，路径过长时页面会明确报错。
 - Windows 可能延迟登录启动，系统启动应用设置或组织策略也可能禁用执行。下次登录后可访问本站地址或用 `.\service.ps1 status` 检查，启动失败时查看 `.runtime` 日志。
 - 自动启动不等于自动登录 Azure。仍使用该 Windows 用户的 Azure CLI 凭据，登录过期时需重新执行 `az login`。关闭网页不影响后台服务。
+
+**未开启自启动时，如何手动打开 App：**
+
+在 PowerShell 执行以下命令（适用于 Quick Start 默认安装目录），再打开 **http://127.0.0.1:8765**；自定义端口以脚本输出为准：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $env:LOCALAPPDATA "AzureOpenAILab\start.ps1")
+```
+
+自定义安装目录请将脚本路径替换为该目录下的 `start.ps1`，或在页面关闭开关后复制“手动启动命令”。该命令只启动已有应用，不会重新安装，也不会覆盖已关闭的自启动选择。`-Foreground` 仅用于前台调试，不会初始化默认自启动。
 
 ## 使用流程
 

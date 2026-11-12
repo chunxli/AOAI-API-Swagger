@@ -30,6 +30,14 @@ function Get-ConfiguredPort {
     return [int]$port
 }
 
+function Initialize-StartupSettings {
+    & $python (Join-Path $PSScriptRoot "startup_settings.py") --initialize-default
+    if ($LASTEXITCODE -ne 0) {
+        $startScript = (Join-Path $PSScriptRoot "start.ps1").Replace("'", "''")
+        throw "Unable to initialize Windows logon startup. The service remains running. To start manually later: powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$startScript'"
+    }
+}
+
 function Get-ManagedProcess {
     if (-not (Test-Path -LiteralPath $pidFile)) {
         return $null
@@ -75,6 +83,10 @@ function Start-ServiceProcess {
     $existing = Get-ManagedProcess
     $port = Get-ConfiguredPort
     if ($existing) {
+        if (-not (Wait-UntilHealthy -Port $port -Process $existing)) {
+            throw "Existing Swagger server is not healthy. Check $stderrLog before changing startup settings."
+        }
+        Initialize-StartupSettings
         Write-Host "Swagger server is already running (PID $($existing.Id)): http://127.0.0.1:$port"
         return
     }
@@ -101,6 +113,7 @@ function Start-ServiceProcess {
         Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
         throw "Swagger server failed to become ready. Check $stderrLog"
     }
+    Initialize-StartupSettings
     Write-Host "Swagger server started in background (PID $($process.Id)): http://127.0.0.1:$port"
     Write-Host "Logs: $stdoutLog and $stderrLog"
 }

@@ -277,6 +277,7 @@ Test-SetupCase "Failed repository update prevents dependency changes, sign-in an
 Test-SetupCase "Background service hides its console and redirects unbuffered logs to files" {
     . (Join-Path $PSScriptRoot "service.ps1")
     $script:backgroundStarted = $false
+    $script:serviceStages = @()
     function Assert-Prerequisites {}
     function Get-ManagedProcess { return $null }
     function Get-ConfiguredPort { return 9000 }
@@ -299,11 +300,60 @@ Test-SetupCase "Background service hides its console and redirects unbuffered lo
     function Wait-UntilHealthy {
         param($Port, $Process)
         Assert-Setup ($Port -eq 9000 -and $Process.Id -eq 123) "Service health check was bypassed."
+        $script:serviceStages += "health"
         return $true
     }
+    function Initialize-StartupSettings { $script:serviceStages += "startup-default" }
     function Stop-Process { throw "Must not stop any real process in the launch test." }
     Start-ServiceProcess
     Assert-Setup $script:backgroundStarted "Background service was not launched."
+    Assert-Setup (($script:serviceStages -join ",") -eq "health,startup-default") "Initialize autostart only after service health verification."
+}
+
+Test-SetupCase "Service initializes defaults through the shared startup manager and reports failures" {
+    . (Join-Path $PSScriptRoot "service.ps1")
+    $python = "Invoke-MockStartupConfiguration"
+    $script:startupExitCode = 0
+    $script:startupConfigurationCalls = 0
+    function Invoke-MockStartupConfiguration {
+        param($Script, $Action)
+        Assert-Setup ($Script -eq (Join-Path $PSScriptRoot "startup_settings.py")) "Wrong startup manager module."
+        Assert-Setup ($Action -eq "--initialize-default") "Must apply the one-time default."
+        $script:startupConfigurationCalls++
+        $global:LASTEXITCODE = $script:startupExitCode
+    }
+    Initialize-StartupSettings
+    Assert-Setup ($script:startupConfigurationCalls -eq 1) "Default configuration was not initialized."
+    $script:startupExitCode = 1
+    Assert-SetupThrows { Initialize-StartupSettings } "manual.*start.ps1"
+}
+
+Test-SetupCase "Already running services initialize preferences without creating another process" {
+    . (Join-Path $PSScriptRoot "service.ps1")
+    $script:startupConfigurationCalls = 0
+    function Assert-Prerequisites {}
+    function Get-ManagedProcess { return [pscustomobject]@{ Id = 123 } }
+    function Get-ConfiguredPort { return 9000 }
+    function Wait-UntilHealthy { return $true }
+    function Initialize-StartupSettings { $script:startupConfigurationCalls++ }
+    function Start-Process { throw "Must not launch another service." }
+    Start-ServiceProcess
+    Assert-Setup ($script:startupConfigurationCalls -eq 1) "Existing installations must apply the new default once."
+}
+
+Test-SetupCase "Unhealthy services never register default autostart" {
+    . (Join-Path $PSScriptRoot "service.ps1")
+    function Assert-Prerequisites {}
+    function Get-ManagedProcess { return $null }
+    function Get-ConfiguredPort { return 9000 }
+    function Get-NetTCPConnection { return $null }
+    function New-Item {}
+    function Set-Content {}
+    function Remove-Item {}
+    function Start-Process { return [pscustomobject]@{ Id = 123; HasExited = $true } }
+    function Wait-UntilHealthy { return $false }
+    function Initialize-StartupSettings { throw "Must not register an unhealthy service." }
+    Assert-SetupThrows { Start-ServiceProcess } "failed to become ready"
 }
 
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ("aoai-setup-test-" + [guid]::NewGuid().ToString("N"))
@@ -652,6 +702,7 @@ try {
         function Start-Process { throw "Must not open browser before successful health check." }
         Assert-SetupThrows { Start-SetupApplication $directory } "expected WebApp health"
     }
+
 } finally {
     Remove-Item -LiteralPath $fixture -Recurse -Force
 }

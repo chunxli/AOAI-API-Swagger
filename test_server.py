@@ -352,7 +352,10 @@ class ProxyTests(unittest.TestCase):
 
     def test_startup_settings_get_and_update(self):
         headers = {"X-Lab-Session": self.session}
-        disabled = {"supported": True, "enabled": False, "mode": "current-user-logon"}
+        disabled = {
+            "supported": True, "enabled": False, "mode": "current-user-logon",
+            "manual_start_command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'C:\\Demo Lab\\start.ps1'",
+        }
         enabled = {**disabled, "enabled": True}
         with patch.object(self.app.state.startup, "read", return_value=disabled) as read:
             result = self.client.get("/api/settings/startup", headers=headers)

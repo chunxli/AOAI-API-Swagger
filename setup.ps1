@@ -307,7 +307,7 @@ function Start-SetupApplication {
     Write-Host ""
     Write-Host "Setup complete: $url"
     Write-Host "Select your subscription, Endpoint, and deployment in the page."
-    Write-Host "No model inference was sent and Windows autostart was not changed."
+    Write-Host "No model inference was sent. Windows logon startup is enabled once by default; later choices are preserved."
     Start-Process $url
 }
 

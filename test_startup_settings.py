@@ -1,12 +1,14 @@
 """Offline tests for current-user startup settings; never modify the real registry."""
 
-from contextlib import nullcontext
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
+import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from startup_settings import RUN_KEY, StartupManager, StartupSettingsError
+from startup_settings import RUN_KEY, StartupManager, StartupSettingsError, main
 
 
 class FakeRegistry:
@@ -63,12 +65,88 @@ class StartupSettingsTests(unittest.TestCase):
         self.environment_patch.start()
         self.addCleanup(self.environment_patch.stop)
 
-    def test_read_does_not_register_startup_by_default(self):
+    def test_read_is_side_effect_free_before_setup_initializes_default(self):
         self.assertEqual(self.manager.read(), {
             "supported": True, "enabled": False, "mode": "current-user-logon",
+            "manual_start_command": self.manager.manual_start_command(),
         })
         self.assertFalse(self.registry.exists)
         self.assertFalse(self.registry.values)
+
+    def test_first_setup_or_upgrade_enables_startup_once(self):
+        self.assertTrue(self.manager.initialize_default()["enabled"])
+        marker = self.root / ".runtime" / "startup-default.json"
+        self.assertEqual(json.loads(marker.read_text("utf-8")), {"version": 1})
+        self.assertTrue(StartupManager(self.root).initialize_default()["enabled"])
+        self.assertFalse(list(marker.parent.glob("startup-settings-*")))
+
+    def test_disabled_choice_survives_future_setup_and_new_manager_instances(self):
+        self.manager.initialize_default()
+        self.manager.write(False)
+        self.assertFalse(StartupManager(self.root).initialize_default()["enabled"])
+        self.assertNotIn(self.manager.value_name, self.registry.values)
+
+    def test_explicit_disabled_choice_before_initialization_is_respected(self):
+        self.manager.write(False)
+        self.assertFalse(self.manager.initialize_default()["enabled"])
+        self.assertFalse(self.registry.values)
+
+    def test_preexisting_enabled_entry_is_preserved_and_marked_initialized(self):
+        self.registry.exists = True
+        self.registry.values[self.manager.value_name] = (self.manager.command(), self.registry.REG_SZ)
+        self.assertTrue(self.manager.initialize_default()["enabled"])
+        self.assertTrue((self.root / ".runtime" / "startup-default.json").is_file())
+
+    def test_invalid_initialization_record_does_not_silently_change_startup(self):
+        marker = self.root / ".runtime" / "startup-default.json"
+        marker.parent.mkdir()
+        for value in ("not json", "[]", '{"version":true}', '{"version":0}'):
+            marker.write_text(value, encoding="utf-8")
+            with self.assertRaises(StartupSettingsError):
+                self.manager.initialize_default()
+            self.assertFalse(self.registry.values)
+
+    def test_initialization_and_preference_storage_failures_are_explicit(self):
+        self.registry.failure = PermissionError("denied")
+        with self.assertRaisesRegex(StartupSettingsError, "denied"):
+            self.manager.initialize_default()
+        self.assertFalse((self.root / ".runtime" / "startup-default.json").exists())
+        self.registry.failure = None
+        with patch("startup_settings.tempfile.TemporaryDirectory", side_effect=PermissionError("record denied")):
+            with self.assertRaisesRegex(StartupSettingsError, "record denied"):
+                self.manager.write(False)
+
+    def test_manual_start_command_uses_the_actual_directory_and_quotes_powershell_literals(self):
+        command = self.manager.read()["manual_start_command"]
+        self.assertIn("powershell.exe -NoProfile -ExecutionPolicy Bypass -File", command)
+        self.assertIn(f"'{self.root / 'start.ps1'}'", command)
+        special = StartupManager(self.root / "user's $app")
+        self.assertIn("user''s $app", special.manual_start_command())
+
+    def test_initializer_cli_preserves_disabled_choice_and_prints_manual_command(self):
+        state = self.manager.write(False)
+        output = io.StringIO()
+        with (
+            patch("startup_settings.sys.argv", ["startup_settings.py", "--initialize-default"]),
+            patch("startup_settings.StartupManager") as factory,
+            redirect_stdout(output),
+        ):
+            factory.return_value.initialize_default.return_value = state
+            self.assertEqual(main(), 0)
+        self.assertIn("preserving your choice", output.getvalue())
+        self.assertIn(state["manual_start_command"], output.getvalue())
+        factory.return_value.initialize_default.assert_called_once_with()
+
+    def test_initializer_cli_reports_errors_instead_of_success(self):
+        output = io.StringIO()
+        with (
+            patch("startup_settings.sys.argv", ["startup_settings.py", "--initialize-default"]),
+            patch("startup_settings.StartupManager") as factory,
+            redirect_stderr(output),
+        ):
+            factory.return_value.initialize_default.side_effect = StartupSettingsError("denied")
+            self.assertEqual(main(), 1)
+        self.assertIn("denied", output.getvalue())
 
     def test_enable_persists_and_disable_preserves_other_startup_entries(self):
         self.registry.exists = True
@@ -128,6 +206,9 @@ class StartupSettingsTests(unittest.TestCase):
     def test_unsupported_platform_is_explicit(self):
         with patch("startup_settings.winreg", None):
             self.assertFalse(self.manager.read()["supported"])
+            self.assertIsNone(self.manager.read()["manual_start_command"])
+            self.assertFalse(self.manager.initialize_default()["supported"])
+            self.assertFalse((self.root / ".runtime" / "startup-default.json").exists())
             with self.assertRaises(StartupSettingsError):
                 self.manager.write(True)
 
