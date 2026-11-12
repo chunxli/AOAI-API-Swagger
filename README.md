@@ -28,6 +28,8 @@ try {
 
 每次下载使用唯一查询参数并请求不使用缓存，避免更新后短时间内仍运行旧脚本。如果刚更新后仍出现相同错误，请重新复制上面的完整命令，不要复用此前下载的脚本。
 
+如果 npm 安装报 `EALLOWREMOTE`，请参阅下方 [npm proxy compatibility：包源兼容处理](#npm-proxy-compatibility包源兼容处理)。脚本支持显式的包源前缀映射，不需要放开远程下载权限或关闭 SSL 校验。
+
 下载脚本及通过 HTTPS 克隆、更新公开代码无需 GitHub 账号或仓库授权。访问 Azure 资源仍需使用你自己的 Azure 账号执行 `az login`，并具备对应订阅和资源的访问权限。
 
 如果希望先下载并审阅脚本，也可以从 [setup.ps1](setup.ps1) 的文件页面下载（无需先克隆整个仓库），在下载目录执行：
@@ -104,6 +106,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDire
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -CheckOnly
 ```
 
+- `-NpmRegistryPrefix` 为可选的原始压缩包地址前缀，将该前缀映射到 npm 当前配置的 registry，仅对本次依赖安装生效；不修改用户、全局或项目级 npm 配置。使用说明见下方包源兼容处理。
 - 支持 Windows PowerShell 5.1+。请以实际使用 Azure 的 Windows 用户运行，不要切换成另一个管理员账号，否则登录凭据和自启动设置也属于那个账号。
 - PATH 中存在多个同名程序（例如同时存在传统 Python Launcher 与 WindowsApps 的 `py.exe`）时，脚本按命令搜索顺序只选择第一个匹配路径，不会将多个路径拼成一条命令。
 - 缺少工具且找不到 `winget` 时，脚本会停止并提示安装 Microsoft Store 中的 **App Installer / 应用安装程序**，或手动安装下面列出的工具。已有全部工具时无需 winget。
@@ -155,7 +158,30 @@ Python 依赖安装到项目的 `.venv`，npm 安装本地 Swagger UI 静态资�
 
 如果 npm 报 `ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE`，说明下载包时 TLS 握手失败，不是 Python 安装失败。先用 `npm config get registry` 检查当前包源；企业网络应使用组织批准的包源、代理及 CA 配置，不要通过 `strict-ssl=false` 或 `NODE_TLS_REJECT_UNAUTHORIZED=0` 关闭校验。修复网络配置或更新安装脚本后，可用 `-InstallDirectory` 指向原安装目录重跑，已有仓库和有效 `.venv` 会复用。
 
-如果包源返回 `EALLOWREMOTE` / `Fetching packages of type "remote" have been disabled`，表示包源策略禁止获取某些依赖。请联系管理员批准所需依赖或提供可用的受批准包源；脚本不会改用其他源绕过该策略。
+##### npm proxy compatibility：包源兼容处理
+
+`EALLOWREMOTE` / `Fetching packages of type "remote" have been disabled` 不一定表示依赖被公司单独禁止。npm 12 默认 `allow-remote=none`；一些代理/镜像的元数据会返回不同域名或路径前缀的压缩包地址，npm 可能把正常的包源依赖误判为直接 URL 依赖。因此两台机器使用相同包源，npm 11 和 npm 12 的结果也可能不同。参见 [npm 配置文档](https://docs.npmjs.com/cli/v12/using-npm/config#allow-remote)及[相关上游问题](https://github.com/npm/cli/issues/9796)。
+
+先在安装目录中检查实际使用的 npm 和包源（不要分享包含凭据的地址或完整 `.npmrc`）：
+
+```powershell
+node --version
+npm.cmd --version
+npm.cmd config get registry
+npm.cmd config get allow-remote
+npm.cmd view swagger-ui-dist@5.32.15 dist.tarball
+npm.cmd view "@scarf/scarf@1.4.0" dist.tarball
+```
+
+**仅当当前受批准的 registry 确实支持提供相同包的压缩包时**，可用最新版安装脚本的 `-NpmRegistryPrefix` 参数，把元数据中的原始压缩包前缀映射回该 registry。例如，元数据返回 `https://packages.example.org/feed/npm/registry/@scarf/scarf/-/scarf-1.4.0.tgz`，则前缀为 `https://packages.example.org/feed/npm/registry`。下面是占位示例，必须替换为实际前缀，并非让你切换到该示例包源：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -NpmRegistryPrefix "https://packages.example.org/feed/npm/registry"
+```
+
+使用顶部 Quick Start 时，只需在调用行的 `-File $setup` 后追加同样的 `-NpmRegistryPrefix "实际前缀"`。脚本将其作为 npm 的 `--replace-registry-host` 参数传入，仅作用于本次 `npm install`；映射不会持久保存，之后重新下载运行或更新时请保留此参数。默认不传参数时，继续遵循已有 `.npmrc`、环境变量及 npm 配置，不做自动推断、重试或包源切换。
+
+前缀必须为不含账号、密码、查询参数或 fragment 的绝对 HTTPS 地址。脚本不包含任何公司的固定包源地址，不修改 `allow-remote`、`strict-ssl` 或全局 npm 配置，也不会降级 npm。该方式已在 npm 12.2.1 上验证；若当前 npm 不支持 URL 前缀映射，或 registry 不提供对应压缩包，安装仍会明确失败，应由环境/包源维护者提供兼容配置，不要放开全部远程下载或关闭 TLS 校验。
 
 #### 3. 登录 Azure 并启动
 

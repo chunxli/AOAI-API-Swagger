@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [string]$InstallDirectory,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [string]$NpmRegistryPrefix
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,11 +36,25 @@ function Find-SetupPython {
 }
 
 function Invoke-SetupCommand {
-    param([string]$Command, [string[]]$Arguments, [string]$Description)
+    param([string]$Command, [string[]]$Arguments, [string]$Description, [string]$FailureHint)
     & $Command @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "$Description failed (exit $LASTEXITCODE). Resolve the error above and rerun setup.ps1."
+        $message = "$Description failed (exit $LASTEXITCODE). Resolve the error above and rerun setup.ps1."
+        if ($FailureHint) { $message += "`n$FailureHint" }
+        throw $message
     }
+}
+
+function Resolve-SetupNpmRegistryPrefix {
+    param([string]$Prefix)
+    if ($Prefix -eq "") { return "" }
+    $uri = $null
+    if (-not [Uri]::TryCreate($Prefix, [UriKind]::Absolute, [ref]$uri) -or
+        $uri.Scheme -ne "https" -or -not $uri.Host -or
+        $uri.UserInfo -or $uri.Query -or $uri.Fragment) {
+        throw "NpmRegistryPrefix must be an absolute HTTPS URL prefix without credentials, query parameters, or fragments."
+    }
+    return $uri.AbsoluteUri.TrimEnd("/")
 }
 
 function Update-SetupPath {
@@ -159,7 +174,14 @@ function Connect-SetupAzure {
 }
 
 function Install-SetupDependencies {
-    param([string]$Python, [string]$Npm, [string]$Directory)
+    param([string]$Python, [string]$Npm, [string]$Directory, [string]$NpmRegistryPrefix)
+    $prefix = Resolve-SetupNpmRegistryPrefix $NpmRegistryPrefix
+    $npmArguments = @("install", "--ignore-scripts", "--no-audit", "--no-fund")
+    if ($prefix) {
+        $npmArguments += "--replace-registry-host=$prefix"
+        Write-Host "Mapping the supplied tarball registry prefix to npm's configured registry for this install only."
+        Write-Host "Download permissions, TLS verification, and persistent npm configuration are unchanged."
+    }
     $venv = Join-Path $Directory ".venv"
     $venvPython = Join-Path $venv "Scripts\python.exe"
     if (-not (Test-Path -LiteralPath $venv)) {
@@ -176,9 +198,10 @@ function Install-SetupDependencies {
     ) "Installing Python dependencies" | Out-Host
     Push-Location $Directory
     try {
-        Invoke-SetupCommand $Npm @(
-            "install", "--ignore-scripts", "--no-audit", "--no-fund"
-        ) "Installing Swagger UI assets" | Out-Host
+        $hint = "If npm reports EALLOWREMOTE, compare npm --version, npm config get registry, and npm config get allow-remote."
+        $hint += " For an approved proxy that serves the same package tarballs, rerun with -NpmRegistryPrefix '<original HTTPS tarball registry prefix>'; see README: npm proxy compatibility."
+        $hint += " Setup does not relax download permissions or TLS verification."
+        Invoke-SetupCommand $Npm $npmArguments "Installing Swagger UI assets" $hint | Out-Host
     } finally {
         Pop-Location
     }
@@ -202,10 +225,11 @@ function Start-SetupApplication {
 }
 
 function Invoke-WebAppSetup {
-    param([string]$Directory, [switch]$PreflightOnly)
+    param([string]$Directory, [switch]$PreflightOnly, [string]$NpmRegistryPrefix)
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         throw "This installer supports Windows only."
     }
+    $NpmRegistryPrefix = Resolve-SetupNpmRegistryPrefix $NpmRegistryPrefix
     if (-not $Directory) {
         if ((Test-Path -LiteralPath (Join-Path $PSScriptRoot "server.py")) -and
             (Test-Path -LiteralPath (Join-Path $PSScriptRoot ".git"))) {
@@ -224,7 +248,7 @@ function Invoke-WebAppSetup {
     Write-Host "[1/4] Cloning or updating repository (private repositories require GitHub access)."
     Initialize-SetupRepository $tools["Git.Git"] $Directory
     Write-Host "[2/4] Installing project dependencies."
-    Install-SetupDependencies $tools["Python.Python.3.12"] $tools["OpenJS.NodeJS.LTS"] $Directory
+    Install-SetupDependencies $tools["Python.Python.3.12"] $tools["OpenJS.NodeJS.LTS"] $Directory -NpmRegistryPrefix $NpmRegistryPrefix
     Write-Host "[3/4] Checking Azure sign-in."
     Connect-SetupAzure $tools["Microsoft.AzureCLI"]
     Write-Host "[4/4] Starting the WebApp."
@@ -233,7 +257,7 @@ function Invoke-WebAppSetup {
 
 if ($MyInvocation.InvocationName -ne ".") {
     try {
-        Invoke-WebAppSetup -Directory $InstallDirectory -PreflightOnly:$CheckOnly
+        Invoke-WebAppSetup -Directory $InstallDirectory -PreflightOnly:$CheckOnly -NpmRegistryPrefix $NpmRegistryPrefix
     } catch {
         Write-Error "Setup failed: $($_.Exception.Message)" -ErrorAction Continue
         exit 1

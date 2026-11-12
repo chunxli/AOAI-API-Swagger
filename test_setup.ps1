@@ -74,6 +74,34 @@ Test-SetupCase "Native command failures are not ignored" {
     } "exit 7"
 }
 
+Test-SetupCase "Native command failures include optional recovery guidance" {
+    $shell = (Get-Process -Id $PID).Path
+    Assert-SetupThrows {
+        Invoke-SetupCommand $shell @("-NoProfile", "-Command", "exit 7") "Test command" "Use -NpmRegistryPrefix for approved registry mapping."
+    } "exit 7.*[\s\S]*NpmRegistryPrefix"
+}
+
+Test-SetupCase "Registry prefix accepts only HTTPS URLs without credentials, queries or fragments" {
+    Assert-Setup ((Resolve-SetupNpmRegistryPrefix "") -eq "") "Missing mapping must remain disabled."
+    Assert-Setup ((Resolve-SetupNpmRegistryPrefix "https://packages.example.test/feed/npm/registry/") -eq "https://packages.example.test/feed/npm/registry") "Registry prefix was not normalized."
+    foreach ($prefix in @(
+        "http://packages.example.test/feed", "packages.example.test", " ",
+        "https://user:secret@packages.example.test/feed",
+        "https://packages.example.test/feed?token=secret",
+        "https://packages.example.test/feed#fragment"
+    )) {
+        Assert-SetupThrows { Resolve-SetupNpmRegistryPrefix $prefix } "absolute HTTPS"
+    }
+}
+
+Test-SetupCase "Invalid registry prefix fails before any tool installation or repository changes" {
+    function Get-SetupTools { throw "Must not install tools" }
+    function Initialize-SetupRepository { throw "Must not update code" }
+    Assert-SetupThrows {
+        Invoke-WebAppSetup -Directory $PSScriptRoot -NpmRegistryPrefix "http://packages.example.test/feed"
+    } "absolute HTTPS"
+}
+
 Test-SetupCase "Missing prerequisite without winget fails explicitly" {
     function Find-SetupCommand { return $null }
     Assert-SetupThrows { Get-SetupTools -Install } "winget"
@@ -110,7 +138,7 @@ Test-SetupCase "CheckOnly performs no clone, install, sign-in or startup" {
     function Install-SetupDependencies { throw "Must not install dependencies" }
     function Connect-SetupAzure { throw "Must not sign in" }
     function Start-SetupApplication { throw "Must not start service" }
-    Invoke-WebAppSetup -Directory $PSScriptRoot -PreflightOnly
+    Invoke-WebAppSetup -Directory $PSScriptRoot -PreflightOnly -NpmRegistryPrefix "https://packages.example.test/feed"
 }
 
 Test-SetupCase "Full setup executes repository, dependencies, login, and start in order" {
@@ -121,10 +149,14 @@ Test-SetupCase "Full setup executes repository, dependencies, login, and start i
         return @{}
     }
     function Initialize-SetupRepository { $script:stages += "clone" }
-    function Install-SetupDependencies { $script:stages += "install" }
+    function Install-SetupDependencies {
+        param($Python, $Npm, $Directory, $NpmRegistryPrefix)
+        Assert-Setup ($NpmRegistryPrefix -eq "https://packages.example.test/feed") "Mapping was not passed to dependency installation."
+        $script:stages += "install"
+    }
     function Connect-SetupAzure { $script:stages += "login" }
     function Start-SetupApplication { $script:stages += "start" }
-    Invoke-WebAppSetup -Directory $PSScriptRoot
+    Invoke-WebAppSetup -Directory $PSScriptRoot -NpmRegistryPrefix "https://packages.example.test/feed/"
     Assert-Setup (($script:stages -join ",") -eq "clone,install,login,start") "Incorrect setup order."
 }
 
@@ -358,8 +390,11 @@ try {
         $script:installCalls = @()
         $location = $PWD.Path
         function Invoke-SetupCommand {
-            param($Command, $Arguments, $Description)
+            param($Command, $Arguments, $Description, $FailureHint)
             $script:installCalls += ,@($Arguments)
+            if ($Command -eq "mock-npm") {
+                Assert-Setup ($FailureHint -match "EALLOWREMOTE" -and $FailureHint -match "NpmRegistryPrefix") "npm failures need specific recovery guidance."
+            }
         }
         Install-SetupDependencies "mock-python" "mock-npm" $directory
         Assert-Setup ($script:installCalls.Count -eq 3) "Incorrect dependency stages."
@@ -367,7 +402,44 @@ try {
         Assert-Setup ($script:installCalls[2] -contains "--ignore-scripts") "npm lifecycle scripts must stay disabled."
         Assert-Setup (@($script:installCalls[2] | Where-Object { $_ -like "--registry*" }).Count -eq 0) "Setup must honor the configured npm registry."
         Assert-Setup (@($script:installCalls[2] | Where-Object { $_ -like "--*ssl*" }).Count -eq 0) "Setup must not override npm TLS verification."
+        Assert-Setup (@($script:installCalls[2] | Where-Object { $_ -like "--allow-*" -or $_ -like "--replace-registry-host*" }).Count -eq 0) "Default setup must not change download permissions or registry mappings."
         Assert-Setup ($PWD.Path -eq $location) "Working directory was not restored."
+    }
+
+    Test-SetupCase "Explicit mapping affects only this npm install and never changes npm configuration" {
+        $directory = Join-Path $fixture "dependencies"
+        $script:mappedNpmCalls = 0
+        $location = $PWD.Path
+        function Invoke-SetupCommand {
+            param($Command, $Arguments, $Description, $FailureHint)
+            if ($Command -ne "mock-npm") { return }
+            Assert-Setup ($Arguments[0] -eq "install") "Setup must not write npm configuration."
+            Assert-Setup ($Arguments -contains "--replace-registry-host=https://packages.example.test/feed/npm/registry") "Missing exact source prefix mapping."
+            Assert-Setup (@($Arguments | Where-Object { $_ -like "--allow-*" -or $_ -like "--*ssl*" -or $_ -like "--registry*" }).Count -eq 0) "Mapping must not override permissions, TLS or the configured registry."
+            $script:mappedNpmCalls++
+        }
+        Install-SetupDependencies "mock-python" "mock-npm" $directory -NpmRegistryPrefix "https://packages.example.test/feed/npm/registry/"
+        Assert-Setup ($script:mappedNpmCalls -eq 1) "Expected exactly one mapped install."
+        Assert-Setup (-not (Test-Path -LiteralPath (Join-Path $directory ".npmrc"))) "Setup must not create persistent registry configuration."
+        Assert-Setup ($PWD.Path -eq $location) "Working directory was not restored."
+    }
+
+    Test-SetupCase "Mapped npm failures are not retried with weaker settings" {
+        $directory = Join-Path $fixture "dependencies"
+        $location = $PWD.Path
+        $script:failedNpmCalls = 0
+        function Invoke-SetupCommand {
+            param($Command, $Arguments, $Description, $FailureHint)
+            if ($Command -eq "mock-npm") {
+                $script:failedNpmCalls++
+                throw "Installing Swagger UI assets failed (exit 1). $FailureHint"
+            }
+        }
+        Assert-SetupThrows {
+            Install-SetupDependencies "mock-python" "mock-npm" $directory -NpmRegistryPrefix "https://packages.example.test/feed"
+        } "exit 1.*[\s\S]*EALLOWREMOTE"
+        Assert-Setup ($script:failedNpmCalls -eq 1) "Setup must not silently retry or change registries."
+        Assert-Setup ($PWD.Path -eq $location) "Failed install did not restore the working directory."
     }
 
     Test-SetupCase "Startup honors the configured port and checks health before opening the browser" {
