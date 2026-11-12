@@ -5,6 +5,8 @@
 基于 Azure 官方 OpenAPI 固定快照，覆盖 **14 类 API、完整请求/响应 Schema**。
 浏览器访问本地 Swagger UI，由 Python 代理通过 Azure CLI 获取 Microsoft Entra ID 令牌并调用 Azure；无需 API Key。
 
+Swagger JSON 来自微软官方 [Azure/azure-rest-api-specs](https://github.com/Azure/azure-rest-api-specs) 的 Azure OpenAI v1 定义，使用固定提交快照，并非从个人 Azure 资源导出。详见[API Swagger JSON 来源](#api-swagger-json-来源)。
+
 ## Quick Start
 
 **Windows 一键安装并启动**：在普通 PowerShell 窗口粘贴以下整段命令。无需预先安装 Git、Python、Node.js 或 Azure CLI；缺少的工具由 Windows 的 `winget` 安装。安装器可能请求管理员确认，Azure 登录可能要求浏览器交互或 MFA，这些不能自动跳过。
@@ -330,6 +332,27 @@ Swagger UI 版本固定在 `package.json`，生成的 `package-lock.json` 仅保
 浏览器验证采用请求拦截模拟 Responses 和文件上传，不代表已连接当前 Azure 资源，也不会自动检查实际部署或 RBAC。
 
 ## 官方来源与授权
+
+### API Swagger JSON 来源
+
+本站使用的 API 定义来自微软官方仓库 **Azure/azure-rest-api-specs**，不是自行编写的完整 API 清单，也不是从用户账户或 Azure 资源导出的 Swagger：
+
+| 项目 | 来源信息 |
+| --- | --- |
+| 官方仓库 | [Azure/azure-rest-api-specs](https://github.com/Azure/azure-rest-api-specs) |
+| 上游文件 | `specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json` |
+| 固定提交 | [`a6943a926f76b3a2f90371b3466157eddf760e25`](https://github.com/Azure/azure-rest-api-specs/commit/a6943a926f76b3a2f90371b3466157eddf760e25) |
+| 官方 JSON 下载 | [固定提交的原始 JSON](https://raw.githubusercontent.com/Azure/azure-rest-api-specs/a6943a926f76b3a2f90371b3466157eddf760e25/specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json) |
+| 快照获取日期 | `2026-09-23`（记录于来源元数据，不代表 API 发布日期） |
+| API / 文档格式 | Azure OpenAI `v1` / OpenAPI `3.2.0` |
+| 本地原始副本 | [vendor/azure-openai-v1.json](vendor/azure-openai-v1.json) |
+| 校验及来源记录 | [vendor/source.json](vendor/source.json)，包含 SHA-256、提交号、下载地址及授权信息 |
+
+原始 JSON 保持不变。应用通过 [specification.py](specification.py) 在内存中生成页面适配版：修改本地代理地址、Entra ID 认证声明、中文分类说明及请求示例，移除外部 `x-ms-examples` 引用，并补充文件上传等 UI 适配。浏览器从本地 `/api/openapi.json` 读取适配版；测试集合也是从同一份定义筛选生成，不是独立来源。
+
+页面使用仓库内的固定快照，**不会在启动或更新安装脚本时自动下载上游最新 API 定义**；只有项目提交更新了快照文件，更新应用才会获得新的定义。定义中存在某个操作，不代表当前订阅、模型部署、区域或 RBAC 权限一定支持该操作。
+
+### 参考文档与授权
 
 - [Microsoft Learn v1 生命周期与 OpenAPI 下载入口](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle)
 - [Microsoft Entra ID 认证指南](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/managed-identity)
