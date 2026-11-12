@@ -48,6 +48,35 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 
 完成后通常访问 **http://127.0.0.1:8765**（可选配置覆盖端口时以脚本输出为准），选择订阅、Endpoint 和部署后即可测试。Windows 登录后自启动默认关闭，可在页面中自行开启；脚本不会修改此选择。
 
+## Quick Uninstall
+
+在普通 PowerShell 窗口复制下面整段命令。**默认只停止所选安装的服务并关闭当前 Windows 用户的登录自启动，保留代码、配置、日志、请求历史和依赖**，可随后重新运行 Quick Start 恢复使用。不会删除 Azure 资源、退出 Azure CLI 登录，或卸载共享的 Git、Python、Node.js、Azure CLI。
+
+```powershell
+$uninstall = Join-Path $env:TEMP ("aoai-uninstall-" + [guid]::NewGuid().ToString("N") + ".ps1")
+try {
+    Invoke-WebRequest -UseBasicParsing -Uri ("https://raw.githubusercontent.com/chunxli/AOAI-API-Swagger/main/uninstall.ps1?nocache=" + [guid]::NewGuid().ToString("N")) -Headers @{ "Cache-Control" = "no-cache" } -OutFile $uninstall -ErrorAction Stop
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $uninstall
+    if ($LASTEXITCODE -ne 0) { throw "Uninstall failed. See the error above." }
+} finally {
+    if (Test-Path -LiteralPath $uninstall) { Remove-Item -LiteralPath $uninstall -Force }
+}
+```
+
+下载版脚本默认针对 `%LOCALAPPDATA%\AzureOpenAILab`。自定义安装目录请在上方 `-File $uninstall` 后追加 `-InstallDirectory "你的安装目录"`；不会扫描或卸载其他位置的实例。请使用原来运行本站的同一 Windows 用户执行。
+
+也可以先下载并审阅 [uninstall.ps1](uninstall.ps1)，或在已更新的项目目录中运行：
+
+```powershell
+.\uninstall.ps1 -WhatIf
+.\uninstall.ps1
+.\uninstall.ps1 -InstallDirectory "$env:USERPROFILE\Dev\AzureOpenAILab"
+```
+
+`-WhatIf` 只显示操作目标，不停止服务或修改自启动。重复运行默认卸载是安全的；目录不存在或依赖不完整时会明确报错，不会报告卸载成功。关闭自启动或停止服务失败时会停止后续步骤，错误需先处理后重试。
+
+**彻底删除（可选，不可恢复）**：在顶部下载命令的 `-File $uninstall` 后追加 `-RemoveFiles`，脚本会要求再次确认，然后停止服务、关闭自启动并删除安装及全部本地数据。为防误删，此选项仅允许默认的 `%LOCALAPPDATA%\AzureOpenAILab`，要求从安装目录外运行单独下载的脚本，且目标不能包含符号链接或目录联接。自定义目录和开发仓库只允许默认保留文件的卸载；需要删除时请自行确认、备份后手动处理。浏览器中的收藏和站点存储不会被清理。
+
 ## 应用截图
 
 以下为实际 WebApp 的界面局部截图，使用隔离预览环境中的**虚构演示数据**：账户、租户、订阅、资源地址和部署均不是个人生产配置。截图未获取真实 Azure Token，也未调用模型。
@@ -326,6 +355,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test_setup.ps1
 覆盖 Schema 完整性、路径白名单、访问限制、资源操作保护、JSON/multipart/二进制/SSE、
 令牌缓存、超时、错误透传、不自动重试，以及历史持久化、内容恢复、隐私过滤和保留策略等行为。
 `test_setup.ps1` 在 Windows PowerShell 5.1 下模拟工具安装、克隆、依赖安装与 Azure 登录，覆盖失败中止、保留已有目录、登录复用及启动健康检查；不会实际安装软件、远程克隆或登录 Azure。
+
+卸载脚本的离线测试（不会修改真实自启动或服务）：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test_uninstall.ps1
+```
 
 当前版本已在 Windows / Python 3.14 上验证。`requirements-lock.txt` 记录该环境中验证过的 Python 包版本，
 Swagger UI 版本固定在 `package.json`，生成的 `package-lock.json` 仅保留在本机；升级依赖时可从 `requirements.txt` 的兼容范围安装后重新运行测试。
