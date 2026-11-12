@@ -1,19 +1,14 @@
-![Azure OpenAI REST API Lab — 自动发现资源、Entra ID 认证与 Windows 一键安装](docs/images/banner.svg)
+![Azure OpenAI REST API Lab](docs/images/banner.svg)
 
-# Azure OpenAI 本地 Swagger 测试站点
+# Azure OpenAI 本地 REST API 实验室
 
-基于 Azure 官方 OpenAPI 固定快照，覆盖 **14 类 API、完整请求/响应 Schema**。
-浏览器访问本地 Swagger UI，由 Python 代理通过 Azure CLI 获取 Microsoft Entra ID 令牌并调用 Azure；无需 API Key。
+本地 Swagger UI，自动发现 Azure 订阅、Endpoint 和部署，使用 Azure CLI / Entra ID 认证，无需 API Key。官方快照包含 **14 类 API、106 个操作**。
 
-Swagger JSON 来自微软官方 [Azure/azure-rest-api-specs](https://github.com/Azure/azure-rest-api-specs) 的 Azure OpenAI v1 定义，使用固定提交快照，并非从个人 Azure 资源导出。详见[API Swagger JSON 来源](#api-swagger-json-来源)。
+[使用](#使用) · [启动与更新](#启动与更新) · [卸载](#quick-uninstall) · [常见问题](#常见问题) · [Swagger JSON 来源](#api-swagger-json-来源)
 
 ## Quick Start
 
-**Windows 一键安装并启动**：在普通 PowerShell 窗口粘贴以下整段命令。无需预先安装 Git、Python、Node.js 或 Azure CLI；缺少的工具由 Windows 的 `winget` 安装。安装器可能请求管理员确认，Azure 登录可能要求浏览器交互或 MFA，这些不能自动跳过。
-
-**仓库已公开，可直接运行，无需登录 GitHub：**
-
-只复制下面代码块中的命令，不要复制终端提示符（`PS C:\…>`、`>>`）、运行输出或报错文本。如果终端正在等待续行输入，先按 `Ctrl+C` 取消再粘贴。
+在 **PowerShell 5.1 / 7+（Windows）** 中运行：
 
 ```powershell
 $setup = Join-Path $env:TEMP ("aoai-setup-" + [guid]::NewGuid().ToString("N") + ".ps1")
@@ -26,33 +21,94 @@ try {
 }
 ```
 
-每次下载使用唯一查询参数并请求不使用缓存，避免更新后短时间内仍运行旧脚本。如果刚更新后仍出现相同错误，请重新复制上面的完整命令，不要复用此前下载的脚本。
+缺失工具通过 `winget` 安装；脚本自动下载/更新代码、安装依赖、登录 Azure、后台启动并打开浏览器。按提示完成 UAC 或 MFA。
 
-如果 npm 安装报 `EALLOWREMOTE`，脚本会核验当前包源元数据，并在可安全识别地址前缀时**自动映射重试一次**，无需手动追加参数，也不放开远程下载权限或关闭 SSL 校验。详情见 [npm proxy compatibility：包源兼容处理](#npm-proxy-compatibility包源兼容处理)。
+- 默认安装目录：`%LOCALAPPDATA%\AzureOpenAILab`；默认地址：**http://127.0.0.1:8765**。
+- 无需创建 `config.json`；需已有 Azure 部署及相应权限。
+- 登录自启动默认开启，可在页面关闭。
 
-下载脚本及通过 HTTPS 克隆、更新公开代码无需 GitHub 账号或仓库授权。访问 Azure 资源仍需使用你自己的 Azure 账号执行 `az login`，并具备对应订阅和资源的访问权限。
+## 使用
 
-如果希望先下载并审阅脚本，也可以从 [setup.ps1](setup.ps1) 的文件页面下载（无需先克隆整个仓库），在下载目录执行：
+1. 选择订阅、Endpoint 和模型部署，点击“获取访问令牌”。
+2. 选择“推理入门”：先用 **GET /models** 检查权限，再选择 **Responses** 或 **Chat Completions**，通过 **Try it out → Execute** 发起请求。
+3. 查看响应和请求历史，或复制 Bash、PowerShell、Python 等价命令。
+
+> **Execute 调用真实 Azure API，可能计费。** 上传、修改、删除和作业操作需先解锁。
+
+Responses、Chat Completions、Completions 和 Embeddings 的 `model` 自动同步为当前部署。Embedding 需兼容部署；Batch JSONL、Fine-tuning 等操作需自行填写模型。
+
+提供全部接口、推理入门、Batch、向量检索四种集合，不自动执行或传递 ID。切换集合保留连接，清除请求编辑和响应。资源卡片可跳转 Azure Portal / Microsoft Foundry。
+
+<details>
+<summary>应用截图（虚构演示数据）</summary>
+
+![连接与安全控制](docs/images/app-workspace.png)
+
+![API Explorer](docs/images/app-api-explorer.png)
+
+</details>
+
+## 启动与更新
+
+### 手动启动
+
+关闭自启动后，默认安装可运行：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $env:LOCALAPPDATA "AzureOpenAILab\start.ps1")
 ```
 
-只运行从本项目取得并审阅过的脚本。`ExecutionPolicy Bypass` 仅用于这次 PowerShell 子进程，不修改系统执行策略，也不能绕过组织策略。
+按启动输出的地址访问。自定义目录可直接从页面复制手动启动命令。
 
-脚本会依次执行：
+服务在后台运行，日志保存在 `.runtime`。以下命令在安装目录执行：
 
-1. **Pre-check / 工具安装**：检查 Windows、Git、Python 3.10+、Node.js/npm、Azure CLI；缺失时通过 winget 安装 Git、Python 3.12、Node.js LTS 或 Azure CLI，刷新当前进程的 PATH。
-2. **Clone / Update**：首次默认克隆到 `%LOCALAPPDATA%\AzureOpenAILab`；已有本项目仓库时，确认位于 `main` 且工作区干净，再执行 `git pull --ff-only --no-rebase origin main` 更新代码。在已有项目目录运行脚本时使用该目录。
-3. **Install**：创建项目 `.venv`、安装固定的 Python 依赖和本地 Swagger UI 静态资源。
-4. **Azure 登录**：已有有效登录则复用，否则执行 `az login`。验证 ARM 令牌时不输出 Token，不修改 CLI 默认订阅，也不会创建 Azure 资源或调用模型。
-5. **Start**：启动或重启本站后台服务，验证健康状态并初始化一次性的 Windows 登录自启动默认值，再打开浏览器。页面自动发现账户、Endpoint 和模型部署；**无需创建配置文件**。
+| 命令 | 用途 |
+|---|---|
+| `.\restart.ps1` | 重启 |
+| `.\stop.ps1` | 停止本站服务 |
+| `.\service.ps1 status` | 查看 PID 和访问地址 |
+| `.\start.ps1 -Foreground` | 前台调试，Ctrl+C 停止；不初始化自启动 |
 
-完成后通常访问 **http://127.0.0.1:8765**（可选配置覆盖端口时以脚本输出为准），选择订阅、Endpoint 和部署后即可测试。**Windows 登录后自启动默认开启**：首次安装或现有安装升级到此版本后，正常后台启动时会自动开启一次；之后可在页面关闭，后续重跑安装/更新或手动启动会保留该选择。关闭后的手动启动方式见[登录 Windows 后自动启动](#登录-windows-后自动启动)。
+### 登录 Windows 后自动启动
+
+首次安装或首次升级到此策略时，后台启动会**自动开启一次**登录自启动；之后保留开关选择。仅在当前 Windows 用户登录后运行，不自动打开浏览器。
+
+关闭开关不停止当前服务。选择记录在 `.runtime/startup-default.json`，删除会重置默认值；移动或删除应用前先关闭开关。
+
+### 更新与安装选项
+
+**重跑 Quick Start 即可更新并重启**。仅支持干净 `main` 分支上的快进更新，不覆盖本地改动。安装中止时不重启，也不回滚已更新代码。
+
+从仓库运行 [setup.ps1](setup.ps1) 使用该仓库；下载版使用默认安装目录。可追加参数：
+
+| 参数 | 用途 |
+|---|---|
+| `-InstallDirectory "D:\AzureOpenAILab"` | 指定安装目录，更新/卸载时保持一致 |
+| `-CheckOnly` | 只检查工具 |
+| `-NpmRegistryPrefix` | 手动包源映射，见下方 npm 排查 |
+
+<details>
+<summary>手动安装（可选）</summary>
+
+需 Git、Python 3.10+、Node.js/npm 和 Azure CLI：
+
+```powershell
+git clone https://github.com/chunxli/AOAI-API-Swagger.git
+Set-Location .\AOAI-API-Swagger
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+npm.cmd install --ignore-scripts --no-audit --no-fund
+az login
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+仓库不含 npm 锁文件，首次用 `npm install`，不用 `npm ci`。Azure CLI 无需额外扩展或精确版本。
+
+</details>
 
 ## Quick Uninstall
 
-在普通 PowerShell 窗口复制下面整段命令。**默认只停止所选安装的服务并关闭当前 Windows 用户的登录自启动，保留代码、配置、日志、请求历史和依赖**，可随后重新运行 Quick Start 恢复使用。不会删除 Azure 资源、退出 Azure CLI 登录，或卸载共享的 Git、Python、Node.js、Azure CLI。
+**默认停服务、关自启动，保留文件和数据**。不影响 Azure 资源或共享工具。
 
 ```powershell
 $uninstall = Join-Path $env:TEMP ("aoai-uninstall-" + [guid]::NewGuid().ToString("N") + ".ps1")
@@ -65,376 +121,100 @@ try {
 }
 ```
 
-下载版脚本默认针对 `%LOCALAPPDATA%\AzureOpenAILab`。自定义安装目录请在上方 `-File $uninstall` 后追加 `-InstallDirectory "你的安装目录"`；不会扫描或卸载其他位置的实例。请使用原来运行本站的同一 Windows 用户执行。
+[uninstall.ps1](uninstall.ps1) 默认处理 Quick Start 安装目录。在 `-File $uninstall` 后追加：
 
-也可以先下载并审阅 [uninstall.ps1](uninstall.ps1)，或在已更新的项目目录中运行：
+- `-InstallDirectory "实际目录"`：指定安装。
+- `-WhatIf`：只预览。
+- **`-RemoveFiles`：确认后永久删除安装和数据。** 仅支持默认目录，须在目录外使用下载版脚本；含符号链接/目录联接时拒删，自定义目录和开发仓库不自动删除。
 
-```powershell
-.\uninstall.ps1 -WhatIf
-.\uninstall.ps1
-.\uninstall.ps1 -InstallDirectory "$env:USERPROFILE\Dev\AzureOpenAILab"
+使用原安装用户执行。保留文件时可重跑 Quick Start 恢复运行；Azure CLI 登录和浏览器存储不清理。
+
+## 可选配置与数据安全
+
+修改端口：在安装目录创建 UTF-8 的 `config.json`，重启生效。
+
+```json
+{"port": 9000}
 ```
 
-`-WhatIf` 只显示操作目标，不停止服务或修改自启动。重复运行默认卸载是安全的；目录不存在或依赖不完整时会明确报错，不会报告卸载成功。关闭自启动或停止服务失败时会停止后续步骤，错误需先处理后重试。
+默认超时 **180 秒**、上传上限 **32 MiB**，scope 为 `https://ai.azure.com/.default`，也支持 `https://cognitiveservices.azure.com/.default`。更多选项见 [server.py](server.py) 的 `DEFAULT_CONFIG`；页面选择优先。
 
-**彻底删除（可选，不可恢复）**：在顶部下载命令的 `-File $uninstall` 后追加 `-RemoveFiles`，脚本会要求再次确认，然后停止服务、关闭自启动并删除安装及全部本地数据。为防误删，此选项仅允许默认的 `%LOCALAPPDATA%\AzureOpenAILab`，要求从安装目录外运行单独下载的脚本，且目标不能包含符号链接或目录联接。自定义目录和开发仓库只允许默认保留文件的卸载；需要删除时请自行确认、备份后手动处理。浏览器中的收藏和站点存储不会被清理。
+- **仅限本机使用**，不要通过监听地址或反向代理暴露服务。
+- 读取当前 Azure CLI 账户，不更改默认订阅。需资源读取及推理权限，如 `Cognitive Services OpenAI User`；页面解锁不替代 RBAC 授权。
+- 等价命令**含临时 Token，勿分享**。Swagger 自带 curl 指向本机代理，缺少会话码，不能直接执行。
+- 历史默认永久保留请求、响应和上传内容，认证头脱敏，正文仍可能含机密。可按条数/天数清理；恢复不自动执行，文件需重新选择。
+- `.runtime`、`config.json`、`package-lock.json` 不入 Git；分享日志和截图前仍需脱敏。Realtime 响应可能含短期 secret。
+- **Azure 请求不自动重试**。SSE 通常等流结束后显示，初次建议 `stream: false`。仅支持 Azure 公有云，具体能力取决于模型、区域和权限；Realtime 仅 REST 控制，Threads 仅作旧接口参考。
 
-## 应用截图
+## 常见问题
 
-以下为实际 WebApp 的界面局部截图，使用隔离预览环境中的**虚构演示数据**：账户、租户、订阅、资源地址和部署均不是个人生产配置。截图未获取真实 Azure Token，也未调用模型。
+| 现象 | 处理 |
+|---|---|
+| 账户为空或登录过期 | 同一 Windows 用户下执行 `az login` 或 `az login --tenant '<tenant-id>'`，再“刷新账户” |
+| 切换登录账号 | `az logout` 后 `az login`；会影响使用该登录的其他 CLI 工具 |
+| Azure 401/403 | 检查租户、scope、RBAC、网络及角色生效时间 |
+| 本地 403 | 检查页面端口、会话及写操作解锁 |
+| HTTP 500 / 非 JSON 响应 | 查看后端日志 |
+| npm `EALLOWREMOTE` | 自动核验并映射重试一次；失败见下方排查 |
+| npm TLS 握手失败 | 检查受批准包源、代理和 CA，勿关闭 SSL 校验 |
+| 端口占用或自启动未运行 | 查 `service.ps1 status`、Windows 启动设置及日志；勿终止未知进程 |
+| Azure 400/404/429 或上传 413 | 按错误检查字段、部署兼容性、配额和大小限制 |
 
-### 连接与安全控制
-
-自动发现账户、Endpoint 与模型部署，提供 Azure 资源和部署快捷入口、访问令牌操作、写操作保护及 Windows 登录后自启动开关。
-
-![连接与安全控制：演示订阅、Endpoint、模型部署、令牌操作及 Windows 自启动设置](docs/images/app-workspace.png)
-
-### API Explorer
-
-按测试集合浏览官方 API 定义，查看操作指南、请求历史策略及 Bash、PowerShell、Python 等价命令入口；所有真实请求都需手动执行。
-
-![API Explorer：推理入门集合、操作指南、等价命令入口及 Swagger API 分类](docs/images/app-api-explorer.png)
-
-## Setup 详细说明
-
-### 脚本参数与前置条件
-
-下载脚本或进入已有仓库后，可按需指定安装目录，或者只做只读工具检查：
+默认安装的后端日志：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDirectory "$env:USERPROFILE\Dev\AzureOpenAILab"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -CheckOnly
+Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA "AzureOpenAILab\.runtime\server.stderr.log") -Tail 80
 ```
 
-- `-NpmRegistryPrefix` 为可选的原始压缩包地址前缀，将该前缀映射到 npm 当前配置的 registry，仅对本次依赖安装生效；不修改用户、全局或项目级 npm 配置。使用说明见下方包源兼容处理。
-- 支持 Windows PowerShell 5.1+。请以实际使用 Azure 的 Windows 用户运行，不要切换成另一个管理员账号，否则登录凭据和自启动设置也属于那个账号。
-- PATH 中存在多个同名程序（例如同时存在传统 Python Launcher 与 WindowsApps 的 `py.exe`）时，脚本按命令搜索顺序只选择第一个匹配路径，不会将多个路径拼成一条命令。
-- 缺少工具且找不到 `winget` 时，脚本会停止并提示安装 Microsoft Store 中的 **App Installer / 应用安装程序**，或手动安装下面列出的工具。已有全部工具时无需 winget。
-- winget 安装会接受相关软件及源协议，可能触发 UAC；组织禁用安装、要求重启或 PATH 尚未生效时会明确报错，处理后可重新执行。脚本不静默忽略失败。
-- 需要联网访问 GitHub、Python 包源、配置的 npm registry、winget 源及 Azure 登录/管理服务；安装脚本遵循 npm 已有的 registry、代理和 CA 配置，不强制切换到公共源。企业代理或包源认证需由当前环境配置。
-- 脚本只会快进更新已有本项目仓库的 `main` 分支，不会强制覆盖、自动 stash、切换分支或删除不完整的 `.venv`。目录非空但不是本项目仓库时会拒绝使用。重跑脚本会更新代码、安装依赖并重启本站服务，当前进行中的请求可能中断。
-- 自动安装、登录及打开浏览器需要实际 Windows 环境和用户交互；`-CheckOnly` 只检查工具，不进行克隆、代码更新、安装、Azure 登录或服务启动。
+### npm proxy compatibility：包源兼容处理
 
-### 更新已安装的版本
+<details>
+<summary>自动修复失败时展开：诊断与手动映射</summary>
 
-**再次运行顶部 Quick Start 即可更新并重启**：下载最新版安装脚本后，它会检测默认安装目录中的已有仓库，依次更新代码、同步依赖、检查 Azure 登录，再重启服务并验证健康状态。即使没有新提交，也会同步依赖并重启，便于重试未完成的安装。无需删除原安装目录。
+npm 12 可能误判代理返回的压缩包地址。自动修复保留已有自定义映射和独立 scoped registry，这些情况需手动配置。
 
-如果首次使用了自定义目录，请在下载最新版 `setup.ps1` 后指定同一目录：
+在安装目录检查（不要分享含凭据的地址或完整 `.npmrc`）：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDirectory "$env:USERPROFILE\Dev\AzureOpenAILab"
-```
-
-旧版安装脚本本身没有自动更新逻辑，首次升级时请重新下载最新版，不要只运行旧目录里的旧脚本。被 Git 忽略的 `config.json`、`.runtime`、`.venv` 和 `node_modules` 会保留；依赖安装阶段会更新虚拟环境和 npm 包。
-
-发现本地修改（含暂存或未跟踪文件）、非 `main` 分支、分支分叉或拉取失败时，脚本明确停止，不会自动解决冲突，也不会进入依赖安装和服务重启。先自行备份或处理本地改动及 Git 问题后重跑。若代码更新成功但后续依赖安装或登录失败，脚本同样不会重启正在运行的服务，但不会自动回滚已更新的代码或依赖。
-
-### 手动 setup（可选）
-
-如果不使用一键脚本，按以下步骤执行：**安装运行环境 → 安装项目依赖 → 登录 Azure → 启动服务**。无需创建配置文件或手填 Endpoint、部署名称。
-
-#### 1. 准备环境并获取代码
-
-- 安装 Git、Python 3.10+、Node.js（含 npm）和 Azure CLI，安装后重新打开 PowerShell。
-- 准备可访问的 Azure OpenAI / Microsoft Foundry 资源及模型部署。Azure 账户需具备所选订阅的资源读取权限，以及模型推理权限（例如资源上的 `Cognitive Services OpenAI User`）。
-- 本应用不会创建 Azure 资源或模型部署，也不需要配置 API Key。
-
-```powershell
-git clone https://github.com/chunxli/AOAI-API-Swagger.git
-cd .\AOAI-API-Swagger
-```
-
-上述 HTTPS 地址支持匿名克隆，无需 GitHub 登录；已有代码则直接进入包含 `server.py` 的项目目录。
-
-#### 2. 安装依赖
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
-npm install --ignore-scripts --no-audit --no-fund
-```
-
-Python 依赖安装到项目的 `.venv`，npm 安装本地 Swagger UI 静态资源。仓库不包含 `package-lock.json`，首次安装请用 `npm install` 而不是 `npm ci`；生成的锁文件仅保留在本机。
-
-如果 npm 报 `ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE`，说明下载包时 TLS 握手失败，不是 Python 安装失败。先用 `npm config get registry` 检查当前包源；企业网络应使用组织批准的包源、代理及 CA 配置，不要通过 `strict-ssl=false` 或 `NODE_TLS_REJECT_UNAUTHORIZED=0` 关闭校验。修复网络配置或更新安装脚本后，可用 `-InstallDirectory` 指向原安装目录重跑，已有仓库和有效 `.venv` 会复用。
-
-##### npm proxy compatibility：包源兼容处理
-
-`EALLOWREMOTE` / `Fetching packages of type "remote" have been disabled` 不一定表示依赖被公司单独禁止。npm 12 默认 `allow-remote=none`；一些代理/镜像的元数据会返回不同域名或路径前缀的压缩包地址，npm 可能把正常的包源依赖误判为直接 URL 依赖。因此两台机器使用相同包源，npm 11 和 npm 12 的结果也可能不同。参见 [npm 配置文档](https://docs.npmjs.com/cli/v12/using-npm/config#allow-remote)及[相关上游问题](https://github.com/npm/cli/issues/9796)。
-
-**直接运行顶部 Quick Start 即可触发自动处理**：第一次安装出现 `EALLOWREMOTE` 时，脚本从错误中识别标准压缩包地址及精确版本，再通过当前配置的 registry 查询元数据，核验包名、版本、压缩包 URL 及校验信息，生成精确前缀映射后重试一次。第一次 npm 报错仍会显示，后面应看到 `Verifying package metadata` 和 `Retrying through npm's configured registry` 提示。
-
-自动重试只把已核验的原始地址前缀映射回当前 registry，仍由 npm 校验下载内容；不会改用公共源、修改下载权限或关闭 TLS 校验。元数据无法核验、已有非默认地址映射、使用不同的 scoped registry、重试仍失败时会明确停止；TLS、认证、DNS 等其他错误不会触发映射重试。没有写入任何永久 npm 配置，后续运行仍可按需自动检测。
-
-自动处理未成功时，先在安装目录中检查实际使用的 npm 和包源（不要分享包含凭据的地址或完整 `.npmrc`）：
-
-```powershell
-node --version
 npm.cmd --version
 npm.cmd config get registry
 npm.cmd config get allow-remote
-npm.cmd view swagger-ui-dist@5.32.15 dist.tarball
 npm.cmd view "@scarf/scarf@1.4.0" dist.tarball
 ```
 
-**仅当当前受批准的 registry 确实支持提供相同包的压缩包时**，可用最新版安装脚本的 `-NpmRegistryPrefix` 参数，把元数据中的原始压缩包前缀映射回该 registry。例如，元数据返回 `https://packages.example.org/feed/npm/registry/@scarf/scarf/-/scarf-1.4.0.tgz`，则前缀为 `https://packages.example.org/feed/npm/registry`。下面是占位示例，必须替换为实际前缀，并非让你切换到该示例包源：
+当前受批准的 registry 支持相同压缩包时，可指定**原始地址前缀**：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -NpmRegistryPrefix "https://packages.example.org/feed/npm/registry"
 ```
 
-使用顶部 Quick Start 时，可在调用行的 `-File $setup` 后追加同样的 `-NpmRegistryPrefix "实际前缀"`，作为高级手动选项。脚本将其作为 npm 的 `--replace-registry-host` 参数传入，仅作用于本次 `npm install`；显式指定时不会再自动推断或尝试其他映射。手动映射不会持久保存，之后重新下载运行或更新时请保留此参数。未指定时先遵循已有 `.npmrc`、环境变量及 npm 配置，只有明确的 `EALLOWREMOTE` 且通过上述核验才自动重试一次。
+将示例替换为实际 HTTPS 前缀，不得含凭据、查询参数或 fragment。Quick Start 在 `-File $setup` 后追加此参数，仅本次有效，不修改下载权限、TLS 或全局配置。仍失败时联系包源维护者。
 
-前缀必须为不含账号、密码、查询参数或 fragment 的绝对 HTTPS 地址。脚本不包含任何公司的固定包源地址，不修改 `allow-remote`、`strict-ssl` 或全局 npm 配置，也不会降级 npm。该方式已在 npm 12.2.1 上验证；若当前 npm 不支持 URL 前缀映射，或 registry 不提供对应压缩包，安装仍会明确失败，应由环境/包源维护者提供兼容配置，不要放开全部远程下载或关闭 TLS 校验。
+参考：[npm 配置](https://docs.npmjs.com/cli/v12/using-npm/config#allow-remote)、[上游问题](https://github.com/npm/cli/issues/9796)。
 
-#### 3. 登录 Azure 并启动
+</details>
 
-```powershell
-az login
-# 多租户时使用：az login --tenant "<tenant-id>"
-.\start.ps1
-```
+## API Swagger JSON 来源
 
-打开 **http://127.0.0.1:8765**，依次选择订阅、Endpoint 和模型部署，等待资源加载完成后点击“获取访问令牌”，再展开 API 开始测试。
+定义来自微软官方 [Azure/azure-rest-api-specs](https://github.com/Azure/azure-rest-api-specs)。
 
-即使尚未安装 Azure CLI 或尚未登录，WebApp 本身也可以启动；页面会显示安装或登录提示。自动发现需要 `az` 在服务进程的 PATH 中可用、已执行 `az login`，并具备资源读取权限。发现资源不会自动创建部署或发送模型推理请求；未选择 Endpoint 时 Execute 会明确报错，不会使用虚构地址。
+- 固定提交：[`a6943a926f76`](https://github.com/Azure/azure-rest-api-specs/commit/a6943a926f76b3a2f90371b3466157eddf760e25)，快照获取日期 **2026-09-23**。
+- Azure OpenAI **v1** / OpenAPI **3.2.0**：[官方 JSON 下载](https://raw.githubusercontent.com/Azure/azure-rest-api-specs/a6943a926f76b3a2f90371b3466157eddf760e25/specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json) · [本地原始副本](vendor/azure-openai-v1.json) · [来源与 SHA-256](vendor/source.json)。
 
-首次 setup 到此完成。登录 Windows 后默认会自动后台启动；若已关闭该选择，可手动运行 `.\start.ps1`。Azure 登录过期时重新运行 `az login`。页面“登录后自动启动”卡片可随时更改开关，并在关闭时提供当前安装路径的可复制启动命令。
+原始 JSON 保持不变；[specification.py](specification.py) 在内存中适配代理、认证和示例，通过 `/api/openapi.json` 提供给页面。定义为固定快照，不自动追随上游更新。
 
-**注意：Execute 会访问真实 Azure API，推理、存储和作业可能计费。**
+参考：[官方 API 生命周期](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle)、[Entra ID 认证](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/managed-identity)。MIT 授权见 [Azure LICENSE](vendor/LICENSE-Azure.txt)、[OpenAI LICENSE](vendor/LICENSE-OpenAI.txt)；Swagger UI 授权随 npm 包保留。
 
-## Azure CLI 版本与登录要求
+## 开发测试
 
-- 不绑定某个精确的 Azure CLI 版本，建议安装最新稳定版。本轮本机验证使用 **Azure CLI 2.91.0**；未对所有旧版建立兼容性矩阵，因此不宣称未经验证的最低版本。
-- 应用使用内置的 `az account list --output json --only-show-errors` 读取账户；Python `azure-identity` 的 `AzureCliCredential` 通过 `az account get-access-token` 获取令牌，按所选订阅或租户请求。不执行 `az account set`，不改动 CLI 的默认订阅。
-- 资源与部署列表直接调用 Azure Resource Manager REST API，不依赖 `az cognitiveservices` 命令、Foundry/OpenAI 扩展或 CLI 内置的相应服务 API 版本。这里只支持 Azure 公有云 Endpoint。
-- 安装或升级 CLI 后重新打开终端，并重启 WebApp，确保后台进程获取更新后的 PATH。可用以下命令检查版本及登录状态（不会输出访问令牌）：
-
-  ```powershell
-  az version
-  az account list --output table --only-show-errors
-  ```
-
-- 账户为空、登录失效或缺少读取权限时，页面会明确报错。“选择测试账户”卡片中的“重新登录或切换账户”提供可复制的具体命令：选中订阅时为该租户生成 `az login --tenant '<当前租户 ID>'`；没有账户时显示 `az login`。账户读取失败或认证失败时会自动展开指引。
-- 如需切换为其他登录账户，指引提供 `az logout` 后再执行 `az login`，并提示退出会影响同一 Windows 用户下其他依赖 Azure CLI 登录的工具。请在运行本站的同一 Windows 用户下手动执行，完成后点击“刷新账户”，重新选择订阅、Endpoint 和部署；网页不会替你执行登录或退出命令。全量 Swagger Schema 不代表所选模型、区域和账户权限支持全部接口。
-- Windows 下使用同步 `AzureCliCredential` 在线程中获取令牌，按系统编码处理 CLI 输出，避免异步 SDK 将本地编码的错误输出强行按 UTF-8 解码而导致 500；不会阻塞 WebApp 的异步事件循环。真实登录错误仍会明确返回，不会伪装成认证成功。
-- 页面遇到非 JSON 错误响应时会显示 HTTP 状态码和日志位置，而不是 `Unexpected token`。请查看安装目录下 `.runtime/server.stderr.log` 的 Traceback；分享日志前删除 Token 等敏感内容。
-
-参考：[AzureCliCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.azureclicredential?view=azure-python)、[az account](https://learn.microsoft.com/en-us/cli/azure/account?view=azure-cli-latest)。
-
-## 可选本地配置
-
-**正常使用无需创建 `config.json`。** 无此文件时使用端口 `8765`、请求超时 `180` 秒、上传上限 `32 MiB` 和 `https://ai.azure.com/.default` Token scope；账户、Endpoint 和部署由页面发现并选择。
-
-仅需修改默认设置时，在项目根目录创建 UTF-8 编码的 `config.json`，只填写要覆盖的字段。例如改变监听端口：
-
-```json
-{
-  "port": 9000
-}
-```
-
-此时访问 `http://127.0.0.1:9000`。启动、重启、状态检查与登录后自启动使用同一份默认值和配置校验逻辑。
-
-- 可选字段还包括 `request_timeout_seconds`、`max_upload_mb`、`token_scope` 和 `tenant_id`。`tenant_id` 默认留空；scope 也支持明确设置为 `https://cognitiveservices.azure.com/.default`，不会自动回退。
-- 兼容已有配置中的 `endpoint`、`deployment`、`embedding_deployment`；它们不再是必填项，可留空。配置 Endpoint 时必须是 Azure 公有云 HTTPS 资源根地址，不附加 `/openai/v1`；部署名称不一定等于基础模型名。页面选择的资源和部署优先用于请求，Embeddings 等接口仍需选择兼容模型。
-- 配置文件存在但 JSON 或字段格式无效时会明确报错，而不是悄悄使用默认值。修改配置后需重启服务。
-- `config.json`、`package-lock.json`、`.venv`、`node_modules` 和 `.runtime` 均已被 Git 忽略。不要填入密钥、密码或 Token，也不要强制提交个人资源配置及请求历史。
-
-## 启动与服务管理
-
-`start.ps1` 默认在后台启动，不显示服务运行日志窗口，启动完成后终端可以直接关闭。安装/更新重启和 Windows 登录自启动均复用此后台模式；只有显式使用 `-Foreground` 才在终端显示运行日志。安装进度和 Azure 登录需要交互的窗口仍会保留。常用服务命令：
-
-```powershell
-.\start.ps1                 # 后台启动；已运行时直接显示当前 PID
-.\restart.ps1               # 快速重启并等待服务恢复
-.\stop.ps1                  # 停止后台服务
-.\service.ps1 status        # 查看状态、PID 和访问地址
-.\start.ps1 -Foreground     # 前台启动，用 Ctrl+C 停止
-```
-
-打开 **http://127.0.0.1:8765**。脚本可以从任意目录调用，并按自身目录寻找配置及依赖。
-后台 PID 和 stdout/stderr 日志保存在 `.runtime`，日志直接写入文件，不在服务窗口滚动显示；停止和重启会校验 PID 对应的命令行，只管理本站进程。后台服务保留隐藏控制台供 Azure CLI 子进程继承，避免无控制台启动方式导致 CLI 另外弹窗。需要排错时可手动查看：
-
-```powershell
-Get-Content -LiteralPath .\.runtime\server.stderr.log -Tail 80
-Get-Content -LiteralPath .\.runtime\server.stdout.log -Tail 80
-```
-
-## 登录 Windows 后自动启动
-
-**默认开启一次**：首次安装以及现有安装升级到此版本后，正常后台启动并确认健康时会注册当前 Windows 用户的登录自启动。此后用户在页面更改的开关会被保留，不会因更新、重跑安装或再次启动而强制打开。不自动打开浏览器，无需管理员权限或保存 Windows 密码；未登录 Windows 时不会启动。
-
-- 设置直接读取和更新当前用户的 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`，不是浏览器本地存储。注册表值名为 `AzureOpenAILab-<应用路径哈希>`，不同应用目录相互独立。
-- 一次性初始化记录保存在安装目录的 `.runtime/startup-default.json`；显式开启或关闭也会保存该记录。请保留它，以免清理后下次启动重新应用默认开启。默认卸载保留记录并关闭自启动；彻底删除安装后重装则重新使用默认开启。
-- 登录时通过 Windows PowerShell 隐藏运行本站 `start.ps1`，复用现有进程检查、端口检查及日志机制。当前服务已启动时不会重复启动。
-- 关闭开关只移除本站对应的自启动项，不会停止当前服务，也不会修改其他启动项。可点击“刷新状态”读取实际 Windows 设置；权限、组策略或保存错误会明确显示。
-- 启用后请保留应用目录和 `.venv`。移动或删除应用前先关闭开关，到新目录启动后再重新开启。Windows 自启动命令有 260 字符限制，路径过长时页面会明确报错。
-- Windows 可能延迟登录启动，系统启动应用设置或组织策略也可能禁用执行。下次登录后可访问本站地址或用 `.\service.ps1 status` 检查，启动失败时查看 `.runtime` 日志。
-- 自动启动不等于自动登录 Azure。仍使用该 Windows 用户的 Azure CLI 凭据，登录过期时需重新执行 `az login`。关闭网页不影响后台服务。
-
-**未开启自启动时，如何手动打开 App：**
-
-在 PowerShell 执行以下命令（适用于 Quick Start 默认安装目录），再打开 **http://127.0.0.1:8765**；自定义端口以脚本输出为准：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $env:LOCALAPPDATA "AzureOpenAILab\start.ps1")
-```
-
-自定义安装目录请将脚本路径替换为该目录下的 `start.ps1`，或在页面关闭开关后复制“手动启动命令”。该命令只启动已有应用，不会重新安装，也不会覆盖已关闭的自启动选择。`-Foreground` 仅用于前台调试，不会初始化默认自启动。
-
-## 使用流程
-
-1. 从“Azure CLI 测试账户”选择已登录的租户和订阅；常用订阅可点击“收藏”，收藏项会在下拉列表顶部单独显示。页面随后通过 Azure Resource Manager 自动加载可访问的 Azure OpenAI Endpoint 和部署。
-2. 选择 Endpoint 和模型部署，再点击“获取访问令牌”。只获取数据平面令牌，不运行推理；不代表 RBAC 验证成功。验证后可点击“复制 Token”，页面不会显示令牌明文。
-   资源卡片的“打开 Azure 资源”和部署卡片的“打开模型部署”分别在新标签页打开对应的 Azure Portal 资源与 Microsoft Foundry 部署详情。链接随当前选择更新，加载中或没有对应资源/部署时不可用；目标门户仍需登录并具备相应权限。
-   查询资源期间，两张卡片显示醒目的动态进度条与等待说明，完成或失败后自动收起。接口不提供完成百分比，因此进度条只表示正在加载；浏览器启用减少动态效果时显示静态进度条。
-3. 展开 **Models → GET /models → Try it out → Execute** 测试实际资源访问。
-4. 展开 **Responses → POST /responses** 或 **Chat → POST /chat/completions**，检查输入后 Execute；Swagger 示例和 Try it out 编辑器中的 `model` 会自动同步为页面当前选择的部署。
-5. 根据 HTTP 状态、响应 Body、`apim-request-id` / `x-request-id` / `x-ms-client-request-id` 排查。
-6. 删除、上传、创建资源及启动作业前，勾选“允许资源变更 / 作业操作”。该选项只在当前页面生效，刷新即重置。
-7. 每个 API 展开区域底部都有“请求历史”。历史默认永久保存，可查看详情、下载原始请求/响应或将参数恢复到 Try it out；恢复后仍需手动 Execute。
-8. 获取访问令牌并执行请求后，可在 API Explorer 顶部复制等价的 Bash `curl`、Windows PowerShell 5.x 命令或 Python `httpx` 脚本。命令直接调用所选 Azure Endpoint，并嵌入页面内存中最近一次获取或刷新的临时 Bearer Token，不会再次调用 Azure CLI，也不包含本机代理的 `X-Lab-*` Header。命令含敏感且有时效性的 Token，请勿分享；文件上传命令还会使用本地路径占位符，运行前需替换为真实文件路径。
-
-**推理、向量化、存储、训练、Batch、Evals 等都可能计费；不是沙箱或 Mock。**
-这里的解锁仅是本机误操作保护，不是 Azure 权限授权。真实权限仍由 Azure RBAC 决定。
-Entra 身份至少需相应推理权限，例如资源上的 `Cognitive Services OpenAI User`；
-训练和资源管理可能需要不同或更高权限。请按最小权限分配。
-
-## 已实现
-
-- 14 分类：Batch、Chat、Completions、Containers、Conversations、Embeddings、Evals、Files、Fine-tuning、Models、Realtime、Responses、Threads、Vector Stores。
-- 使用完整官方 OpenAPI 3.2 定义，保留所有组件和字段。在内存中调整服务器地址、认证声明、分类描述及常用示例，并移除指向外部 SDK 示例文件的 `x-ms-examples` 扩展，使 UI 文档自包含；原始快照不变。
-- 文件上传 UI 使用小范围适配：原始定义没有声明 `file` 的二进制类型，因此在操作的内联 Schema 中补上 `string/binary`，让 Swagger 显示文件选择器；`expires_after` 展示为实际 multipart 的 `expires_after[anchor]` / `expires_after[seconds]` 字段。原始 components 保持不变。默认文件过期示例为 86400 秒，可根据 Azure 限制修改。
-- Swagger UI 5.32.15 本地静态资源；无 CDN，无外部在线 Schema 校验。
-- Entra 访问令牌在后端内存缓存，临近过期时重新通过 CLI 获取。验证成功后，页面会在当前标签页内存中暂存令牌供“复制 Token”使用，但不会将明文渲染到页面；刷新页面即清除。
-- 页面通过 `az account list` 读取当前 Azure CLI 已登录的租户和订阅。切换账户时，有订阅则按 subscription 获取令牌（订阅已唯一确定租户），无订阅时按 tenant 获取；不执行 `az account set`，不会修改终端中的全局默认订阅。后续 Swagger 请求使用最近一次验证成功的账户。
-- 收藏订阅按 subscription ID 和自定义顺序保存在当前浏览器的 `localStorage`，不上传到服务端。收藏项在下拉列表顶部的独立分组中显示，可用上移/下移按钮调整顺序；刷新 Azure CLI 账户或页面后会保留收藏顺序和当前选择。
-- Endpoint 和部署通过 Azure Resource Manager `2024-10-01` API 自动发现；需要所选订阅的资源读取权限。后端只接受本次发现且域名通过 Azure 校验的 Endpoint，避免代理到任意地址。
-- 每个 API 操作展开后提供对应的 Microsoft Foundry 和 OpenAI 官方文档快捷入口；仅在官方存在匹配文档时显示该侧链接。
-- 页面选择的 Endpoint 会决定后续 Swagger 请求目标；Responses、Chat Completions、Completions 和 Embeddings 的 Swagger 示例与 JSON 请求编辑器会将顶层 `model` 同步为当前部署，切换部署时保留其他已编辑字段。未完成的无效 JSON 暂不改写，恢复为有效 JSON 后继续同步；这四类请求中的 `model` 以页面部署选择为准，后端仍执行相同替换。Batch 输入 JSONL、Fine-tuning 等其他操作的模型字段不会自动改写。
-- 每次 Execute 会同步生成对应的 Bash `curl`、Windows PowerShell 5.x 命令与 Python `httpx` 脚本，保留请求方法、Azure URL、查询参数、业务 Header、请求 Body 和页面最近获取的临时 Token，并应用与代理一致的模型部署替换。账户切换或 Token 刷新开始时会立即清除旧命令，必须在最新 Token 就绪后重新 Execute。PowerShell 普通请求使用 `Invoke-WebRequest -UseBasicParsing`，multipart 上传使用 .NET `HttpClient`；Python 上传脚本使用 `ExitStack` 管理文件句柄。
-- 页面复制操作优先使用同步文本选择复制，以兼容 VS Code 集成浏览器未保持文档焦点的场景；不支持时再使用标准 Clipboard API。复制失败会在对应区域显示明确错误。
-- 固定 Azure 目标、仅代理官方路径与方法、拒绝重定向、仅监听 `127.0.0.1`，验证 Host / Origin / 本机会话 Header。
-- JSON 请求、原始 multipart 文件上传、二进制下载、分页参数和 SSE 透传。
-- 客户端可填写 `x-ms-client-request-id`；留空自动生成 UUID，并在本地响应 Header 返回。仅接受 1–128 个字母、数字及 `._:-`。
-- Azure HTTP 错误状态和 Body 透传；本地认证/网络错误返回明确 JSON 错误。不会自动重试计费或写入请求。
-- 401 会使缓存失效，下一次手动请求重新获取令牌，不重放原请求。
-- 日志仅记录方法、路径、状态和客户端请求 ID，不记录请求 Body、令牌或原始认证错误文本。
-- 请求历史由本地代理写入 `.runtime/request-history.sqlite3`，按文档、方法和 OpenAPI 路径区分 API。JSON、multipart、上传文件、二进制下载及 SSE 均完整保存，响应列表只读取摘要。每条详情会同时显示浏览器原始请求、后端实际发往 Azure 的最终 URL / Headers / 完整 Body，以及 Azure 响应 Headers / Body；因此可核对模型替换、查询参数和最终转发值。未通过本地校验或认证的请求会明确标为“未发往 Azure”。
-- 历史默认永久保留。API Explorer 的“历史保留策略”可改为每个 API 最近 1–10,000 条或最近 1–3,650 天；也可删除单条或清空当前 API。策略变更后会立即清理不符合条件的记录。
-- 服务重启不会清除历史数据库；旧页面检测到重启造成的本机会话失效后，会自动获取新会话并重试历史读取，无需手动刷新页面。
-- 历史恢复会填回路径、查询、业务 Header、JSON Body 和表单文本字段，但不会自动发送请求。浏览器不允许脚本恢复文件选择框，因此上传文件需重新选择；原上传内容仍可从历史下载。
-- 历史记录不会保存访问令牌、API Key、Cookie 或 `X-Lab-*` 控制 Header 的值；实际转发日志中的 `Authorization` 等敏感 Header 只保留名称并将值记为 `<redacted>`。数据库会包含真实提示词、最终转发 Body、响应和上传文件，应按敏感本地数据保护。
-
-## API 文档与测试集合
-
-API EXPLORER 提供“API 文档 / 版本”和“测试集合”两个选择框。第一版只启用已适配的
-**Azure OpenAI v1** 官方固定快照，并显示来源、快照日期及提交号；不代表已支持日期版本或 Preview API。
-
-| 集合 | 内容 |
-|---|---|
-| 全部接口 | 保留完整官方接口与分类 |
-| 推理入门 | 3 个操作：Models、Responses、Chat Completions；两种推理接口为替代选择 |
-| Batch 测试 | 4 个操作：上传 JSONL、创建 Batch、查询 Batch、下载结果/错误文件 |
-| 向量检索 | 6 个操作：独立 Embeddings 测试，以及文件上传、创建向量库、关联文件、检查入库、搜索 |
-
-集合指南可跳转到具体接口，示例相互独立。Batch 集合使用 `/v1/responses` 示例；
-上传 JSONL 中的 URL 需与 Batch endpoint 对应，文件中的 `model` 需填写兼容 Batch 的部署名。
-Embedding 测试与托管文件检索不是同一条必经流程；Vector Store 会处理文件入库。
-
-- 不自动发起请求、轮询、传递 ID 或创建资源；仍需手动 Execute。
-- 切换集合保留账户、Endpoint、部署、令牌及写操作保护状态。
-- 编辑过请求、进入 Try it out 或执行过请求后，切换会先确认；确认后清除 API 编辑、文件选择和响应结果。取消则保留原集合。
-- 请求执行期间禁止切换；Schema 加载失败时保留原集合并明确提示，可重新选择重试。
-- 集合是测试视图，不是权限边界；后端继续按完整的官方 v1 路由白名单和写操作保护校验请求。
-- `/api/explorer` 返回文档与集合目录；`/api/openapi.json?document=azure-openai-v1&collection=batch` 返回对应 Schema。
-  不带参数的 `/api/openapi.json` 继续返回 v1 全部接口。
-- 文档注册和集合定义位于 [specification.py](specification.py) 的 `DOCUMENTS` / `COLLECTIONS`。
-  后续新增版本必须先适配代理路径、认证 scope、部署及版本参数，再注册；不支持直接导入任意 URL、
-  OpenAPI 文件或将网页文档当作可执行接口。
-
-## 边界与注意事项
-
-- **不是对外部署方案**：不要修改监听地址开放到局域网或公网，不要加反向代理暴露。本机其他拥有等同操作权限的进程也可能访问它。
-- Swagger 输出的 curl 指向本机代理，但刻意不含本机会话码，不能直接复制后就绕过保护执行。正式程序请使用原有 Python/PowerShell 示例。
-- Realtime 只涵盖 REST 控制面；不提供 WebRTC/WebSocket/SIP 音频客户端。Realtime 的响应可能包含短期 `client_secret`，请勿分享响应截图。
-- SSE 由代理流式转发，但 Swagger UI 通常等流结束后再显示，建议初次测试使用 `stream: false`。
-- 文件上传默认最大 **32 MiB**，超过返回 413。可按需修改配置；上传缓存在本机内存，因此不适合巨型文件批量传输。Azure 自身仍有额外限制。
-- 历史响应大小不设上限并采用分块存储。文件、音频、图片和长时间 SSE 会持续增大 `.runtime/request-history.sqlite3`；请根据磁盘容量配置保留策略。停止服务后可备份该文件；如需彻底清除全部历史，可停止服务后删除该数据库文件，下一次启动会自动重建。
-- 接收响应过程中断连时，流会失败并记录错误；HTTP 响应一旦开始，无法再改变其状态码。请结合客户端网络错误和日志判断完整性。
-- 长时任务推荐 `background: true` 然后手动查询状态，而不是无限等待同步请求。
-- 不会自动调用 Responses、上传文件、创建作业、执行删除或修改 Azure RBAC。
-- Threads 保留在官方快照中用于参考；旧 Assistants 生命周期及迁移以官方公告为准，不建议新建应用采用。
-- 不提供 Azure ARM 资源/部署管理。`GET /models` 不等同于 Azure 的部署列表。
-- 企业网络代理由 HTTPX 的环境配置控制；若连接失败，应检查代理、TLS 信任、DNS 和 Azure 网络访问策略。
-
-## 常见问题
-
-| 现象 | 排查 |
-|---|---|
-| 401 local-proxy | `az login`、租户、token scope；验证当前 CLI 登录会话 |
-| 401/403 Azure | 检查 Azure RBAC、身份、token audience、防火墙/网络策略；角色刚分配可能需等待生效 |
-| 403 local-proxy | 检查是否从本机页面操作、是否勾选资源变更、是否使用正确端口 |
-| 400 Azure | 模型不支持字段、缺少必填项、请求格式不正确；根据原始错误修改 |
-| 404 Azure | 部署名称、API/模型/区域兼容性、资源 ID |
-| 429 Azure | 配额/限速；参考 `retry-after` 后手动决定是否重试 |
-| 502/504 local-proxy | DNS、TLS、网络代理、Azure 端超时；不会自动重试 |
-| 上传 413 | 本机 `max_upload_mb`；Azure 文件大小限制需另外核查 |
-| 端口被占用 | 修改配置中的 `port`，重启并使用新 URL；不要终止未知进程 |
-
-## 离线测试
+在仓库目录运行离线测试：
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest -v test_server test_startup_settings
 node --check .\static\site.js
-npm test
+npm.cmd test
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test_setup.ps1
-```
-
-测试使用假的 Entra credential 和 HTTPX MockTransport，不发送真实 Azure 请求，不会产生费用。
-覆盖 Schema 完整性、路径白名单、访问限制、资源操作保护、JSON/multipart/二进制/SSE、
-令牌缓存、超时、错误透传、不自动重试，以及历史持久化、内容恢复、隐私过滤和保留策略等行为。
-`test_setup.ps1` 在 Windows PowerShell 5.1 下模拟工具安装、克隆、依赖安装与 Azure 登录，覆盖失败中止、保留已有目录、登录复用及启动健康检查；不会实际安装软件、远程克隆或登录 Azure。
-
-卸载脚本的离线测试（不会修改真实自启动或服务）：
-
-```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test_uninstall.ps1
 ```
 
-当前版本已在 Windows / Python 3.14 上验证。`requirements-lock.txt` 记录该环境中验证过的 Python 包版本，
-Swagger UI 版本固定在 `package.json`，生成的 `package-lock.json` 仅保留在本机；升级依赖时可从 `requirements.txt` 的兼容范围安装后重新运行测试。
-浏览器验证采用请求拦截模拟 Responses 和文件上传，不代表已连接当前 Azure 资源，也不会自动检查实际部署或 RBAC。
-
-## 官方来源与授权
-
-### API Swagger JSON 来源
-
-本站使用的 API 定义来自微软官方仓库 **Azure/azure-rest-api-specs**，不是自行编写的完整 API 清单，也不是从用户账户或 Azure 资源导出的 Swagger：
-
-| 项目 | 来源信息 |
-| --- | --- |
-| 官方仓库 | [Azure/azure-rest-api-specs](https://github.com/Azure/azure-rest-api-specs) |
-| 上游文件 | `specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json` |
-| 固定提交 | [`a6943a926f76b3a2f90371b3466157eddf760e25`](https://github.com/Azure/azure-rest-api-specs/commit/a6943a926f76b3a2f90371b3466157eddf760e25) |
-| 官方 JSON 下载 | [固定提交的原始 JSON](https://raw.githubusercontent.com/Azure/azure-rest-api-specs/a6943a926f76b3a2f90371b3466157eddf760e25/specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json) |
-| 快照获取日期 | `2026-09-23`（记录于来源元数据，不代表 API 发布日期） |
-| API / 文档格式 | Azure OpenAI `v1` / OpenAPI `3.2.0` |
-| 本地原始副本 | [vendor/azure-openai-v1.json](vendor/azure-openai-v1.json) |
-| 校验及来源记录 | [vendor/source.json](vendor/source.json)，包含 SHA-256、提交号、下载地址及授权信息 |
-
-原始 JSON 保持不变。应用通过 [specification.py](specification.py) 在内存中生成页面适配版：修改本地代理地址、Entra ID 认证声明、中文分类说明及请求示例，移除外部 `x-ms-examples` 引用，并补充文件上传等 UI 适配。浏览器从本地 `/api/openapi.json` 读取适配版；测试集合也是从同一份定义筛选生成，不是独立来源。
-
-页面使用仓库内的固定快照，**不会在启动或更新安装脚本时自动下载上游最新 API 定义**；只有项目提交更新了快照文件，更新应用才会获得新的定义。定义中存在某个操作，不代表当前订阅、模型部署、区域或 RBAC 权限一定支持该操作。
-
-### 参考文档与授权
-
-- [Microsoft Learn v1 生命周期与 OpenAPI 下载入口](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle)
-- [Microsoft Entra ID 认证指南](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/managed-identity)
-- 官方快照来源/提交/哈希：[vendor/source.json](vendor/source.json)
-- 原始定义：[vendor/azure-openai-v1.json](vendor/azure-openai-v1.json)
-- MIT 授权：[Azure LICENSE](vendor/LICENSE-Azure.txt)、[OpenAI LICENSE](vendor/LICENSE-OpenAI.txt)
-- Swagger UI 的授权随本地 npm 包保留在 `node_modules/swagger-ui-dist` 中。
-
-这里提供的是人工触发的开发测试工具，不承诺所有当前/未来 Azure 资源支持快照中的每项能力。
+验证环境：Windows、Python 3.14、Azure CLI 2.91.0、npm 12.2.1。依赖版本见 [requirements-lock.txt](requirements-lock.txt) 和 [package.json](package.json)。
