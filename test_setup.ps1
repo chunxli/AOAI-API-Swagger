@@ -81,6 +81,111 @@ Test-SetupCase "Native command failures include optional recovery guidance" {
     } "exit 7.*[\s\S]*NpmRegistryPrefix"
 }
 
+Test-SetupCase "npm install output captures stderr and exit status without hiding the failure" {
+    $shell = (Get-Process -Id $PID).Path
+    $result = Invoke-SetupNpmInstall $shell @(
+        "-NoProfile", "-Command", "[Console]::Error.WriteLine('npm error code EALLOWREMOTE'); exit 7"
+    )
+    Assert-Setup ($result.ExitCode -eq 7) "npm exit status was lost."
+    Assert-Setup ($result.Output -match "npm error code EALLOWREMOTE") "npm stderr was not captured."
+}
+
+Test-SetupCase "Automatic mapping verifies package identity, version, checksum and URL against registry metadata" {
+    $npmFailureOutput = 'npm error Refusing to fetch "@demo/widget@https://packages.example.test/feed/npm/registry/@demo/widget/-/widget-1.4.0.tgz"'
+    $metadata = @{
+        name = "@demo/widget"
+        version = "1.4.0"
+        dist = @{
+            tarball = "https://packages.example.test/feed/npm/registry/@demo/widget/-/widget-1.4.0.tgz"
+            shasum = "0123456789abcdef0123456789abcdef01234567"
+        }
+    }
+    $mapping = "npmjs"
+    $registry = "https://registry.example.test/npm/"
+    $scopedRegistry = "undefined"
+    $metadataShape = "object"
+    function Invoke-SetupCommand {
+        param($Command, $Arguments, $Description)
+        if ($Arguments[0] -eq "config") {
+            switch ($Arguments[2]) {
+                "replace-registry-host" { return $mapping }
+                "registry" { return $registry }
+                "@demo:registry" { return $scopedRegistry }
+                default { throw "Unexpected configuration query." }
+            }
+        }
+        Assert-Setup ($Arguments[0] -eq "view" -and $Arguments[1] -eq "@demo/widget@1.4.0") "Must verify the exact registry package, not fetch a URL."
+        Assert-Setup ($Arguments -contains "--json") "Metadata must use JSON."
+        $text = $metadata | ConvertTo-Json -Depth 5 -Compress
+        if ($metadataShape -eq "array") { return "[$text]" }
+        if ($metadataShape -eq "multiple") { return "[$text,$text]" }
+        return $text
+    }
+    Assert-Setup ((Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput) -eq "https://packages.example.test/feed/npm/registry") "Incorrect automatic prefix."
+    $metadataShape = "array"
+    Assert-Setup ((Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput) -eq "https://packages.example.test/feed/npm/registry") "A single-entry npm metadata array was not supported."
+    $metadataShape = "multiple"
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "metadata"
+    $metadataShape = "object"
+    $metadata.name = "@demo/another"
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "metadata"
+    $metadata.name = "@demo/widget"
+    $metadata.version = "2.0.0"
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "metadata"
+    $metadata.version = "1.4.0"
+    $metadata.dist.tarball = "https://unrelated.example.test/widget.tgz"
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "metadata"
+    $metadata.dist.tarball = "https://packages.example.test/feed/npm/registry/@demo/widget/-/widget-1.4.0.tgz"
+    $metadata.dist.shasum = ""
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "checksum"
+    $metadata.dist.shasum = "0123456789abcdef0123456789abcdef01234567"
+    $mapping = "never"
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "existing.*mapping"
+    $mapping = "npmjs"
+    $scopedRegistry = "https://scoped.example.test/npm/"
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "scoped registry"
+    $scopedRegistry = "undefined"
+    $registry = "http://registry.example.test/npm/"
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "absolute HTTPS"
+}
+
+Test-SetupCase "Unknown remote dependency layouts never trigger speculative metadata or download requests" {
+    function Invoke-SetupCommand { throw "Must not query unverified package identities" }
+    foreach ($blockedOutput in @(
+        "npm error code EALLOWREMOTE",
+        'npm error Refusing to fetch "widget@https://files.example.test/archive.tgz"',
+        'npm error Refusing to fetch "widget@https://files.example.test/widget/-/widget-latest.tgz"',
+        'npm error Refusing to fetch "widget@https://files.example.test/widget/-/widget-1.4.0.tgz?token=secret"'
+    )) {
+        Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $blockedOutput } "standard|absolute HTTPS"
+    }
+}
+
+Test-SetupCase "Unscoped prerelease packages are verified and already-matching registries are not remapped" {
+    $npmFailureOutput = 'npm error Refusing to fetch "widget@https://packages.example.test/feed/widget/-/widget-2.0.0-rc.1.tgz"'
+    $registry = "https://registry.example.test/npm/"
+    function Invoke-SetupCommand {
+        param($Command, $Arguments, $Description)
+        if ($Arguments[0] -eq "config") {
+            if ($Arguments[2] -eq "replace-registry-host") { return "npmjs" }
+            Assert-Setup ($Arguments[2] -eq "registry") "Unscoped packages must not query a scoped registry."
+            return $registry
+        }
+        Assert-Setup ($Arguments[1] -eq "widget@2.0.0-rc.1") "The exact prerelease version was not verified."
+        return (@{
+            name = "widget"
+            version = "2.0.0-rc.1"
+            dist = @{
+                tarball = "https://packages.example.test/feed/widget/-/widget-2.0.0-rc.1.tgz"
+                shasum = "0123456789abcdef0123456789abcdef01234567"
+            }
+        } | ConvertTo-Json -Depth 5 -Compress)
+    }
+    Assert-Setup ((Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput) -eq "https://packages.example.test/feed") "Unscoped package prefix was not inferred."
+    $registry = "https://packages.example.test/feed/"
+    Assert-SetupThrows { Find-SetupNpmRegistryPrefix "mock-npm" $npmFailureOutput } "already belongs"
+}
+
 Test-SetupCase "Registry prefix accepts only HTTPS URLs without credentials, queries or fragments" {
     Assert-Setup ((Resolve-SetupNpmRegistryPrefix "") -eq "") "Missing mapping must remain disabled."
     Assert-Setup ((Resolve-SetupNpmRegistryPrefix "https://packages.example.test/feed/npm/registry/") -eq "https://packages.example.test/feed/npm/registry") "Registry prefix was not normalized."
@@ -390,11 +495,14 @@ try {
         $script:installCalls = @()
         $location = $PWD.Path
         function Invoke-SetupCommand {
-            param($Command, $Arguments, $Description, $FailureHint)
+            param($Command, $Arguments, $Description)
             $script:installCalls += ,@($Arguments)
-            if ($Command -eq "mock-npm") {
-                Assert-Setup ($FailureHint -match "EALLOWREMOTE" -and $FailureHint -match "NpmRegistryPrefix") "npm failures need specific recovery guidance."
-            }
+        }
+        function Invoke-SetupNpmInstall {
+            param($Npm, $Arguments)
+            Assert-Setup ($Npm -eq "mock-npm") "Unexpected npm executable."
+            $script:installCalls += ,@($Arguments)
+            return @{ ExitCode = 0; Output = "" }
         }
         Install-SetupDependencies "mock-python" "mock-npm" $directory
         Assert-Setup ($script:installCalls.Count -eq 3) "Incorrect dependency stages."
@@ -410,13 +518,15 @@ try {
         $directory = Join-Path $fixture "dependencies"
         $script:mappedNpmCalls = 0
         $location = $PWD.Path
-        function Invoke-SetupCommand {
-            param($Command, $Arguments, $Description, $FailureHint)
-            if ($Command -ne "mock-npm") { return }
+        function Invoke-SetupCommand {}
+        function Find-SetupNpmRegistryPrefix { throw "Must not override explicit mapping" }
+        function Invoke-SetupNpmInstall {
+            param($Npm, $Arguments)
             Assert-Setup ($Arguments[0] -eq "install") "Setup must not write npm configuration."
             Assert-Setup ($Arguments -contains "--replace-registry-host=https://packages.example.test/feed/npm/registry") "Missing exact source prefix mapping."
             Assert-Setup (@($Arguments | Where-Object { $_ -like "--allow-*" -or $_ -like "--*ssl*" -or $_ -like "--registry*" }).Count -eq 0) "Mapping must not override permissions, TLS or the configured registry."
             $script:mappedNpmCalls++
+            return @{ ExitCode = 0; Output = "" }
         }
         Install-SetupDependencies "mock-python" "mock-npm" $directory -NpmRegistryPrefix "https://packages.example.test/feed/npm/registry/"
         Assert-Setup ($script:mappedNpmCalls -eq 1) "Expected exactly one mapped install."
@@ -428,18 +538,88 @@ try {
         $directory = Join-Path $fixture "dependencies"
         $location = $PWD.Path
         $script:failedNpmCalls = 0
-        function Invoke-SetupCommand {
-            param($Command, $Arguments, $Description, $FailureHint)
-            if ($Command -eq "mock-npm") {
-                $script:failedNpmCalls++
-                throw "Installing Swagger UI assets failed (exit 1). $FailureHint"
-            }
+        function Invoke-SetupCommand {}
+        function Find-SetupNpmRegistryPrefix { throw "Must not override explicit mapping" }
+        function Invoke-SetupNpmInstall {
+            param($Npm, $Arguments)
+            $script:failedNpmCalls++
+            return @{ ExitCode = 1; Output = "npm ERR! code EALLOWREMOTE" }
         }
         Assert-SetupThrows {
             Install-SetupDependencies "mock-python" "mock-npm" $directory -NpmRegistryPrefix "https://packages.example.test/feed"
         } "exit 1.*[\s\S]*EALLOWREMOTE"
         Assert-Setup ($script:failedNpmCalls -eq 1) "Setup must not silently retry or change registries."
         Assert-Setup ($PWD.Path -eq $location) "Failed install did not restore the working directory."
+    }
+
+    Test-SetupCase "EALLOWREMOTE automatically retries once with a verified prefix and unchanged permissions" {
+        $directory = Join-Path $fixture "dependencies"
+        $location = $PWD.Path
+        $script:autoNpmCalls = 0
+        $script:prefixChecks = 0
+        function Invoke-SetupCommand {}
+        function Find-SetupNpmRegistryPrefix {
+            param($Npm, $FailureOutput)
+            Assert-Setup ($FailureOutput -match "EALLOWREMOTE") "Recovery must inspect the actual npm output."
+            $script:prefixChecks++
+            return "https://packages.example.test/feed/npm/registry"
+        }
+        function Invoke-SetupNpmInstall {
+            param($Npm, $Arguments)
+            $script:autoNpmCalls++
+            Assert-Setup (@($Arguments | Where-Object { $_ -like "--allow-*" -or $_ -like "--*ssl*" -or $_ -like "--registry*" }).Count -eq 0) "Recovery must preserve policy and registry selection."
+            if ($script:autoNpmCalls -eq 1) {
+                Assert-Setup (@($Arguments | Where-Object { $_ -like "--replace-registry-host*" }).Count -eq 0) "First install must honor the existing configuration."
+                return @{ ExitCode = 1; Output = "npm error code EALLOWREMOTE" }
+            }
+            Assert-Setup ($Arguments -contains "--replace-registry-host=https://packages.example.test/feed/npm/registry") "Retry must use only the verified mapping."
+            return @{ ExitCode = 0; Output = "" }
+        }
+        Install-SetupDependencies "mock-python" "mock-npm" $directory
+        Assert-Setup ($script:autoNpmCalls -eq 2 -and $script:prefixChecks -eq 1) "Expected exactly one verified retry."
+        Assert-Setup (-not (Test-Path -LiteralPath (Join-Path $directory ".npmrc"))) "Recovery must not persist configuration."
+        Assert-Setup ($PWD.Path -eq $location) "Working directory was not restored."
+    }
+
+    Test-SetupCase "Automatic recovery failure stops after the second npm attempt" {
+        $directory = Join-Path $fixture "dependencies"
+        $script:autoNpmCalls = 0
+        function Invoke-SetupCommand {}
+        function Find-SetupNpmRegistryPrefix { return "https://packages.example.test/feed" }
+        function Invoke-SetupNpmInstall {
+            $script:autoNpmCalls++
+            return @{ ExitCode = 1; Output = "npm error code EALLOWREMOTE" }
+        }
+        Assert-SetupThrows { Install-SetupDependencies "mock-python" "mock-npm" $directory } "exit 1"
+        Assert-Setup ($script:autoNpmCalls -eq 2) "Recovery retried more than once."
+    }
+
+    Test-SetupCase "Other npm errors are never automatically retried" {
+        $directory = Join-Path $fixture "dependencies"
+        function Invoke-SetupCommand {}
+        function Find-SetupNpmRegistryPrefix { throw "Must not infer mapping for unrelated errors" }
+        foreach ($code in @("E403", "ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE", "ENOTFOUND")) {
+            $script:autoNpmCalls = 0
+            function Invoke-SetupNpmInstall {
+                $script:autoNpmCalls++
+                return @{ ExitCode = 1; Output = "npm error code $code" }
+            }
+            Assert-SetupThrows { Install-SetupDependencies "mock-python" "mock-npm" $directory } "exit 1"
+            Assert-Setup ($script:autoNpmCalls -eq 1) "Unrelated npm failure was retried."
+        }
+    }
+
+    Test-SetupCase "Unverifiable metadata stops recovery before another npm install" {
+        $directory = Join-Path $fixture "dependencies"
+        $script:autoNpmCalls = 0
+        function Invoke-SetupCommand {}
+        function Find-SetupNpmRegistryPrefix { throw "Cannot verify registry metadata" }
+        function Invoke-SetupNpmInstall {
+            $script:autoNpmCalls++
+            return @{ ExitCode = 1; Output = "npm error code EALLOWREMOTE" }
+        }
+        Assert-SetupThrows { Install-SetupDependencies "mock-python" "mock-npm" $directory } "Cannot verify registry metadata"
+        Assert-Setup ($script:autoNpmCalls -eq 1) "Unverified mapping was used."
     }
 
     Test-SetupCase "Startup honors the configured port and checks health before opening the browser" {

@@ -57,6 +57,82 @@ function Resolve-SetupNpmRegistryPrefix {
     return $uri.AbsoluteUri.TrimEnd("/")
 }
 
+function Invoke-SetupNpmInstall {
+    param([string]$Npm, [string[]]$Arguments)
+    $command = Get-Command $Npm -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $ErrorActionPreference = "Continue"
+    $PSNativeCommandUseErrorActionPreference = $false
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    $global:LASTEXITCODE = $null
+    & $command.Source @Arguments 2>&1 | ForEach-Object {
+        $line = $_.ToString()
+        $lines.Add($line)
+        Write-Host $line
+    }
+    if ($null -eq $global:LASTEXITCODE) { throw "Unable to obtain npm installation exit status." }
+    return @{ ExitCode = $global:LASTEXITCODE; Output = ($lines -join "`n") }
+}
+
+function Find-SetupNpmRegistryPrefix {
+    param([string]$Npm, [string]$FailureOutput)
+    $failure = [regex]::Match($FailureOutput, 'Refusing to fetch "(?<name>(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*)@(?<url>https://[^"\s]+)"')
+    if (-not $failure.Success) {
+        throw "Cannot automatically map this EALLOWREMOTE failure: a standard registry tarball URL could not be identified. See README: npm proxy compatibility."
+    }
+    $name = $failure.Groups["name"].Value
+    $url = [uri](Resolve-SetupNpmRegistryPrefix $failure.Groups["url"].Value)
+    $packageBase = ($name -split "/")[-1]
+    $archive = [regex]::Match($url.AbsolutePath,
+        "/" + [regex]::Escape("$name/-/$packageBase-") + '(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\.tgz$')
+    if (-not $archive.Success) {
+        throw "Cannot automatically map a non-standard registry tarball name or version. See README: npm proxy compatibility."
+    }
+    $version = $archive.Groups["version"].Value
+    $mapping = Invoke-SetupCommand $Npm @("config", "get", "replace-registry-host") "Reading npm registry mapping"
+    if ([string]$mapping -cne "npmjs") {
+        throw "Automatic recovery will not override an existing npm registry mapping. Check the configuration or supply -NpmRegistryPrefix explicitly."
+    }
+    $registryText = Invoke-SetupCommand $Npm @("config", "get", "registry") "Reading npm registry"
+    $registryPrefix = Resolve-SetupNpmRegistryPrefix ([string]$registryText).Trim()
+    if (-not $registryPrefix) { throw "Cannot automatically map packages without a configured HTTPS registry." }
+    $registry = [uri]$registryPrefix
+    if ($name.StartsWith("@")) {
+        $scope = ($name -split "/")[0]
+        $scopedRegistry = Invoke-SetupCommand $Npm @("config", "get", "${scope}:registry") "Reading scoped npm registry"
+        if ($scopedRegistry -and [string]$scopedRegistry -notin @("undefined", "null")) {
+            $scopedPrefix = Resolve-SetupNpmRegistryPrefix ([string]$scopedRegistry).Trim()
+            if ($scopedPrefix -cne $registryPrefix) {
+                throw "Automatic recovery cannot remap a different scoped registry to the default registry. Check your approved registry configuration."
+            }
+        }
+    }
+    $json = Invoke-SetupCommand $Npm @(
+        "view", "${name}@${version}", "name", "version", "dist", "--json", "--ignore-scripts"
+    ) "Verifying registry package metadata"
+    $parsed = ($json -join "`n") | ConvertFrom-Json
+    $records = @($parsed)
+    if ($records.Count -ne 1) {
+        throw "Registry metadata must identify exactly one package version; no retry was performed."
+    }
+    $metadata = $records[0]
+    if ($metadata -isnot [pscustomobject] -or $metadata.name -cne $name -or $metadata.version -cne $version -or
+        -not $metadata.dist.tarball) {
+        throw "Registry metadata does not confirm the failed package identity and exact version; no retry was performed."
+    }
+    $advertised = [uri](Resolve-SetupNpmRegistryPrefix ([string]$metadata.dist.tarball))
+    if ($advertised.AbsoluteUri -cne $url.AbsoluteUri) {
+        throw "Registry metadata does not confirm the failed tarball URL; no retry was performed."
+    }
+    if (-not $metadata.dist.integrity -and [string]$metadata.dist.shasum -notmatch '^[a-fA-F0-9]{40}$') {
+        throw "Registry metadata has no package checksum; no automatic retry was performed."
+    }
+    if ($url.GetLeftPart([UriPartial]::Authority) -eq $registry.GetLeftPart([UriPartial]::Authority) -and
+        $url.AbsolutePath.StartsWith($registry.AbsolutePath.TrimEnd("/") + "/", [StringComparison]::Ordinal)) {
+        throw "The failed URL already belongs to the configured registry. Automatic prefix mapping does not apply."
+    }
+    return $url.GetLeftPart([UriPartial]::Authority) + $url.AbsolutePath.Substring(0, $archive.Index)
+}
+
 function Update-SetupPath {
     $paths = @(
         [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -201,7 +277,18 @@ function Install-SetupDependencies {
         $hint = "If npm reports EALLOWREMOTE, compare npm --version, npm config get registry, and npm config get allow-remote."
         $hint += " For an approved proxy that serves the same package tarballs, rerun with -NpmRegistryPrefix '<original HTTPS tarball registry prefix>'; see README: npm proxy compatibility."
         $hint += " Setup does not relax download permissions or TLS verification."
-        Invoke-SetupCommand $Npm $npmArguments "Installing Swagger UI assets" $hint | Out-Host
+        $result = Invoke-SetupNpmInstall $Npm $npmArguments
+        if ($result.ExitCode -ne 0 -and -not $prefix -and
+            $result.Output -match '(?m)^\s*npm\s+(?:error|ERR!)\s+code\s+EALLOWREMOTE\s*$') {
+            Write-Host "npm reported EALLOWREMOTE. Verifying package metadata before one automatic registry-mapping retry."
+            $autoPrefix = Find-SetupNpmRegistryPrefix $Npm $result.Output
+            Write-Host "Verified package identity, version, checksum availability and source URL. Retrying through npm's configured registry."
+            Write-Host "Download permissions, TLS verification, and persistent npm configuration are unchanged."
+            $result = Invoke-SetupNpmInstall $Npm ($npmArguments + @("--replace-registry-host=$autoPrefix"))
+        }
+        if ($result.ExitCode -ne 0) {
+            throw "Installing Swagger UI assets failed (exit $($result.ExitCode)). No further retries were attempted.`n$hint"
+        }
     } finally {
         Pop-Location
     }

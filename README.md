@@ -28,7 +28,7 @@ try {
 
 每次下载使用唯一查询参数并请求不使用缓存，避免更新后短时间内仍运行旧脚本。如果刚更新后仍出现相同错误，请重新复制上面的完整命令，不要复用此前下载的脚本。
 
-如果 npm 安装报 `EALLOWREMOTE`，请参阅下方 [npm proxy compatibility：包源兼容处理](#npm-proxy-compatibility包源兼容处理)。脚本支持显式的包源前缀映射，不需要放开远程下载权限或关闭 SSL 校验。
+如果 npm 安装报 `EALLOWREMOTE`，脚本会核验当前包源元数据，并在可安全识别地址前缀时**自动映射重试一次**，无需手动追加参数，也不放开远程下载权限或关闭 SSL 校验。详情见 [npm proxy compatibility：包源兼容处理](#npm-proxy-compatibility包源兼容处理)。
 
 下载脚本及通过 HTTPS 克隆、更新公开代码无需 GitHub 账号或仓库授权。访问 Azure 资源仍需使用你自己的 Azure 账号执行 `az login`，并具备对应订阅和资源的访问权限。
 
@@ -162,7 +162,11 @@ Python 依赖安装到项目的 `.venv`，npm 安装本地 Swagger UI 静态资�
 
 `EALLOWREMOTE` / `Fetching packages of type "remote" have been disabled` 不一定表示依赖被公司单独禁止。npm 12 默认 `allow-remote=none`；一些代理/镜像的元数据会返回不同域名或路径前缀的压缩包地址，npm 可能把正常的包源依赖误判为直接 URL 依赖。因此两台机器使用相同包源，npm 11 和 npm 12 的结果也可能不同。参见 [npm 配置文档](https://docs.npmjs.com/cli/v12/using-npm/config#allow-remote)及[相关上游问题](https://github.com/npm/cli/issues/9796)。
 
-先在安装目录中检查实际使用的 npm 和包源（不要分享包含凭据的地址或完整 `.npmrc`）：
+**直接运行顶部 Quick Start 即可触发自动处理**：第一次安装出现 `EALLOWREMOTE` 时，脚本从错误中识别标准压缩包地址及精确版本，再通过当前配置的 registry 查询元数据，核验包名、版本、压缩包 URL 及校验信息，生成精确前缀映射后重试一次。第一次 npm 报错仍会显示，后面应看到 `Verifying package metadata` 和 `Retrying through npm's configured registry` 提示。
+
+自动重试只把已核验的原始地址前缀映射回当前 registry，仍由 npm 校验下载内容；不会改用公共源、修改下载权限或关闭 TLS 校验。元数据无法核验、已有非默认地址映射、使用不同的 scoped registry、重试仍失败时会明确停止；TLS、认证、DNS 等其他错误不会触发映射重试。没有写入任何永久 npm 配置，后续运行仍可按需自动检测。
+
+自动处理未成功时，先在安装目录中检查实际使用的 npm 和包源（不要分享包含凭据的地址或完整 `.npmrc`）：
 
 ```powershell
 node --version
@@ -179,7 +183,7 @@ npm.cmd view "@scarf/scarf@1.4.0" dist.tarball
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -NpmRegistryPrefix "https://packages.example.org/feed/npm/registry"
 ```
 
-使用顶部 Quick Start 时，只需在调用行的 `-File $setup` 后追加同样的 `-NpmRegistryPrefix "实际前缀"`。脚本将其作为 npm 的 `--replace-registry-host` 参数传入，仅作用于本次 `npm install`；映射不会持久保存，之后重新下载运行或更新时请保留此参数。默认不传参数时，继续遵循已有 `.npmrc`、环境变量及 npm 配置，不做自动推断、重试或包源切换。
+使用顶部 Quick Start 时，可在调用行的 `-File $setup` 后追加同样的 `-NpmRegistryPrefix "实际前缀"`，作为高级手动选项。脚本将其作为 npm 的 `--replace-registry-host` 参数传入，仅作用于本次 `npm install`；显式指定时不会再自动推断或尝试其他映射。手动映射不会持久保存，之后重新下载运行或更新时请保留此参数。未指定时先遵循已有 `.npmrc`、环境变量及 npm 配置，只有明确的 `EALLOWREMOTE` 且通过上述核验才自动重试一次。
 
 前缀必须为不含账号、密码、查询参数或 fragment 的绝对 HTTPS 地址。脚本不包含任何公司的固定包源地址，不修改 `allow-remote`、`strict-ssl` 或全局 npm 配置，也不会降级 npm。该方式已在 npm 12.2.1 上验证；若当前 npm 不支持 URL 前缀映射，或 registry 不提供对应压缩包，安装仍会明确失败，应由环境/包源维护者提供兼容配置，不要放开全部远程下载或关闭 TLS 校验。
 
