@@ -249,6 +249,9 @@ async function initialize() {
     const environment = selectedEnvironment();
     return environment?.deployments[Number(deploymentSelect.value)] || null;
   };
+  const deploymentSync = window.AzureOpenAIDeploymentSync.createDeploymentSync(
+    () => selectedDeployment()?.name || null,
+  );
   const updateAccountDetails = () => {
     const account = selectedAccount();
     document.getElementById("tenant").textContent = account.tenant_id || "—";
@@ -259,6 +262,7 @@ async function initialize() {
     setCopyValue(copyLoginCommandButton, loginCommand.textContent);
   };
   const updateDeploymentDetails = () => {
+    deploymentSync.notify();
     const deployment = selectedDeployment();
     const environment = selectedEnvironment();
     const tenantId = selectedAccount().tenant_id;
@@ -746,7 +750,7 @@ async function initialize() {
   });
   const swaggerOptions = {
     dom_id: "#swagger-ui",
-    plugins: [collectionLifecycle],
+    plugins: [collectionLifecycle, deploymentSync.plugin],
     deepLinking: true,
     filter: true,
     docExpansion: "none",

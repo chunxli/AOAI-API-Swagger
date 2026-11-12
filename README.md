@@ -218,7 +218,7 @@ Get-Content -LiteralPath .\.runtime\server.stdout.log -Tail 80
    资源卡片的“打开 Azure 资源”和部署卡片的“打开模型部署”分别在新标签页打开对应的 Azure Portal 资源与 Microsoft Foundry 部署详情。链接随当前选择更新，加载中或没有对应资源/部署时不可用；目标门户仍需登录并具备相应权限。
    查询资源期间，两张卡片显示醒目的动态进度条与等待说明，完成或失败后自动收起。接口不提供完成百分比，因此进度条只表示正在加载；浏览器启用减少动态效果时显示静态进度条。
 3. 展开 **Models → GET /models → Try it out → Execute** 测试实际资源访问。
-4. 展开 **Responses → POST /responses** 或 **Chat → POST /chat/completions**，检查输入后 Execute；请求中的 `model` 会替换为页面当前选择的部署。
+4. 展开 **Responses → POST /responses** 或 **Chat → POST /chat/completions**，检查输入后 Execute；Swagger 示例和 Try it out 编辑器中的 `model` 会自动同步为页面当前选择的部署。
 5. 根据 HTTP 状态、响应 Body、`apim-request-id` / `x-request-id` / `x-ms-client-request-id` 排查。
 6. 删除、上传、创建资源及启动作业前，勾选“允许资源变更 / 作业操作”。该选项只在当前页面生效，刷新即重置。
 7. 每个 API 展开区域底部都有“请求历史”。历史默认永久保存，可查看详情、下载原始请求/响应或将参数恢复到 Try it out；恢复后仍需手动 Execute。
@@ -240,7 +240,7 @@ Entra 身份至少需相应推理权限，例如资源上的 `Cognitive Services
 - 收藏订阅按 subscription ID 和自定义顺序保存在当前浏览器的 `localStorage`，不上传到服务端。收藏项在下拉列表顶部的独立分组中显示，可用上移/下移按钮调整顺序；刷新 Azure CLI 账户或页面后会保留收藏顺序和当前选择。
 - Endpoint 和部署通过 Azure Resource Manager `2024-10-01` API 自动发现；需要所选订阅的资源读取权限。后端只接受本次发现且域名通过 Azure 校验的 Endpoint，避免代理到任意地址。
 - 每个 API 操作展开后提供对应的 Microsoft Foundry 和 OpenAI 官方文档快捷入口；仅在官方存在匹配文档时显示该侧链接。
-- 页面选择的 Endpoint 会决定后续 Swagger 请求目标；Responses、Chat Completions、Completions 和 Embeddings 请求 Body 中的 `model` 会由后端替换为当前部署。Batch 输入 JSONL 内的模型字段不会自动改写。
+- 页面选择的 Endpoint 会决定后续 Swagger 请求目标；Responses、Chat Completions、Completions 和 Embeddings 的 Swagger 示例与 JSON 请求编辑器会将顶层 `model` 同步为当前部署，切换部署时保留其他已编辑字段。未完成的无效 JSON 暂不改写，恢复为有效 JSON 后继续同步；这四类请求中的 `model` 以页面部署选择为准，后端仍执行相同替换。Batch 输入 JSONL、Fine-tuning 等其他操作的模型字段不会自动改写。
 - 每次 Execute 会同步生成对应的 Bash `curl`、Windows PowerShell 5.x 命令与 Python `httpx` 脚本，保留请求方法、Azure URL、查询参数、业务 Header、请求 Body 和页面最近获取的临时 Token，并应用与代理一致的模型部署替换。账户切换或 Token 刷新开始时会立即清除旧命令，必须在最新 Token 就绪后重新 Execute。PowerShell 普通请求使用 `Invoke-WebRequest -UseBasicParsing`，multipart 上传使用 .NET `HttpClient`；Python 上传脚本使用 `ExitStack` 管理文件句柄。
 - 页面复制操作优先使用同步文本选择复制，以兼容 VS Code 集成浏览器未保持文档焦点的场景；不支持时再使用标准 Clipboard API。复制失败会在对应区域显示明确错误。
 - 固定 Azure 目标、仅代理官方路径与方法、拒绝重定向、仅监听 `127.0.0.1`，验证 Host / Origin / 本机会话 Header。
